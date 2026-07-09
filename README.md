@@ -700,6 +700,103 @@ Fonctions possibles :
 * extraction de titres ;
 * regroupements par projet.
 
+## 13 bis Versionnement du projet
+
+Textothèque doit suivre une logique de versionnement lente, prudente et progressive.
+
+Le projet étant en phase initiale, les numéros de version ne doivent pas avancer trop vite. Une nouvelle version ne correspond pas à une simple mission Codex, mais à un état identifiable de l’application.
+
+Principe général :
+
+> Baby steps. Une petite amélioration ne justifie pas un grand changement de version.
+
+### Logique recommandée
+
+```text
+0.1.0       premier gel fonctionnel minimal
+0.1.1       correction ou ajustement mineur
+0.1.2       amélioration limitée et stable
+0.1.3-dev.1 travail intermédiaire non gelé
+0.1.3-dev.2 suite du travail intermédiaire
+0.1.3       gel stable après les itérations dev
+0.1.4       amélioration suivante stable
+```
+
+### Règles de progression
+
+La branche `0.1.x` doit couvrir tout le socle initial de Textothèque :
+
+* application Electron fonctionnelle ;
+* interface en trois volets ;
+* création de documents ;
+* édition texte brut ;
+* sauvegarde SQLite ;
+* sélection et réouverture des documents ;
+* métadonnées minimales ;
+* premières corrections d’ergonomie ;
+* stabilisation du principe DB-first.
+
+Le passage à `0.2.0` ne doit pas être automatique.
+
+Il ne doit avoir lieu que lorsqu’un vrai palier fonctionnel est atteint, par exemple :
+
+* un mode Markdown réellement utilisable ;
+* un aperçu Markdown stable ;
+* une évolution importante de l’architecture documentaire ;
+* une première version clairement supérieure au simple socle texte brut.
+
+En pratique, Textothèque peut rester plusieurs jours ou plusieurs semaines en `0.1.x`.
+
+### Règle importante
+
+```text
+0.1.x = consolidation du socle DB-first
+0.2.x = nouveau palier fonctionnel réel
+0.3.x = autre palier majeur clairement identifié
+```
+
+Une mission Codex peut donc produire un rapport `002`, `003`, `004`, etc. sans que la version applicative passe immédiatement à `0.2.0`.
+
+Les rapports d’itération et les versions applicatives ne suivent pas exactement le même rythme :
+
+```text
+reports/001_...  → peut correspondre à 0.1.0
+reports/002_...  → peut correspondre à 0.1.1
+reports/003_...  → peut correspondre à 0.1.2
+reports/004_...  → peut encore correspondre à 0.1.2 ou 0.1.3-dev.1
+```
+
+### Versions de développement
+
+Les suffixes `-dev.x` peuvent être utilisés quand une fonctionnalité est en cours mais pas encore prête à être gelée.
+
+Exemples :
+
+```text
+0.1.3-dev.1
+0.1.3-dev.2
+0.1.3
+```
+
+Cela permet de documenter les étapes intermédiaires sans prétendre qu’elles constituent déjà une version stable.
+
+### Philosophie
+
+Le versionnement doit refléter la maturité réelle de l’application, pas l’enthousiasme du moment.
+
+Textothèque doit avancer lentement, proprement, par petits incréments vérifiables.
+
+Le bon rythme est :
+
+```text
+petite mission
+rapport clair
+test rapide
+correction si nécessaire
+petit incrément de version seulement si cela aide à documenter l’état réel du projet
+```
+
+
 ## 14. IA éventuelle
 
 L’IA n’est pas prioritaire dans les premières versions.
