@@ -1,6 +1,6 @@
 {
   "name": "textotheque",
-  "version": "0.1.1",
+  "version": "0.1.4",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.js",
@@ -13,6 +13,7 @@
     "start": "npm run build && electron dist-electron/main.js",
     "test:db": "tsc -p electron/tsconfig.json && electron scripts/electron-db-check.cjs",
     "test:preload": "tsc -p electron/tsconfig.json && electron scripts/electron-preload-api-check.cjs",
+    "test:ui-safeguards": "npm run build && electron scripts/electron-ui-safeguards-check.cjs",
     "test:electron-sqlite": "electron scripts/electron-sqlite-smoke.cjs"
   },
   "dependencies": {

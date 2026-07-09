@@ -5,6 +5,7 @@ interface EditorPaneProps {
   title: string;
   content: string;
   saveState: 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
+  isDirty: boolean;
   error: string | null;
   onTitleChange: (value: string) => void;
   onContentChange: (value: string) => void;
@@ -24,6 +25,7 @@ export default function EditorPane({
   title,
   content,
   saveState,
+  isDirty,
   error,
   onTitleChange,
   onContentChange,
@@ -41,13 +43,16 @@ export default function EditorPane({
   return (
     <section className="pane editor-pane">
       <header className="editor-toolbar">
-        <input
-          className="title-input"
-          value={title}
-          onChange={(event) => onTitleChange(event.target.value)}
-          placeholder="Sans titre"
-          aria-label="Titre du document"
-        />
+        <div className="title-row">
+          {isDirty ? <span className="title-dirty-marker" aria-label="Modifications non sauvegardees">*</span> : null}
+          <input
+            className="title-input"
+            value={title}
+            onChange={(event) => onTitleChange(event.target.value)}
+            placeholder="Sans titre"
+            aria-label="Titre du document"
+          />
+        </div>
         <div className="save-controls">
           <span className={`save-state ${saveState}`}>{saveLabels[saveState]}</span>
           <button className="primary-button" type="button" onClick={onSave} disabled={saveState === 'saving'}>

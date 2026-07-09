@@ -1,8 +1,11 @@
 import type { TextDocument } from '../types/document';
 
+const UNTITLED_FALLBACK = 'Sans titre';
+
 interface NavigationPaneProps {
   documents: TextDocument[];
   selectedDocumentId: number | null;
+  dirtyDocumentId: number | null;
   onCreateDocument: () => void;
   onSelectDocument: (id: number) => void;
 }
@@ -23,6 +26,7 @@ function formatDate(value: string | null): string {
 export default function NavigationPane({
   documents,
   selectedDocumentId,
+  dirtyDocumentId,
   onCreateDocument,
   onSelectDocument,
 }: NavigationPaneProps) {
@@ -47,17 +51,28 @@ export default function NavigationPane({
         {documents.length === 0 ? (
           <p className="empty-state">Aucun document pour le moment.</p>
         ) : (
-          documents.map((document) => (
-            <button
-              className={document.id === selectedDocumentId ? 'document-item selected' : 'document-item'}
-              key={document.id}
-              type="button"
-              onClick={() => onSelectDocument(document.id)}
-            >
-              <span className="document-title">{document.favorite ? '* ' : ''}{document.title}</span>
-              <span className="document-meta">{document.status} · {formatDate(document.updated_at)}</span>
-            </button>
-          ))
+          documents.map((document) => {
+            const isDirty = dirtyDocumentId === document.id;
+            const displayTitle = document.title.trim() || UNTITLED_FALLBACK;
+
+            return (
+              <button
+                className={document.id === selectedDocumentId ? 'document-item selected' : 'document-item'}
+                key={document.id}
+                type="button"
+                onClick={() => onSelectDocument(document.id)}
+              >
+                <span className="document-title">
+                  {isDirty ? <span className="dirty-marker">*</span> : null}
+                  {document.favorite ? '* ' : ''}
+                  {displayTitle}
+                </span>
+                <span className="document-meta">
+                  {document.status} - {formatDate(document.updated_at)}
+                </span>
+              </button>
+            );
+          })
         )}
       </div>
     </aside>

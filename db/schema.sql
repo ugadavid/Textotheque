@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS documents (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  title TEXT NOT NULL DEFAULT 'Sans titre',
+  title TEXT NOT NULL DEFAULT '',
   content TEXT NOT NULL DEFAULT '',
   content_format TEXT NOT NULL DEFAULT 'plain' CHECK (content_format IN ('plain', 'markdown', 'rich')),
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'to_review', 'final', 'archived')),

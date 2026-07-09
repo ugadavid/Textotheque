@@ -8,6 +8,7 @@ const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
 let database: TextothequeDatabase | null = null;
+let closeApproved = false;
 
 function getDatabase(): TextothequeDatabase {
   if (!database) {
@@ -25,9 +26,14 @@ function registerIpcHandlers(): void {
     getDatabase().updateDocument(id, input)
   );
   ipcMain.handle('documents:mark-opened', (_event, id: number) => getDatabase().markOpened(id));
+  ipcMain.handle('app:approve-close', () => {
+    closeApproved = true;
+    mainWindow?.close();
+  });
 }
 
 async function createWindow(): Promise<void> {
+  closeApproved = false;
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -47,6 +53,15 @@ async function createWindow(): Promise<void> {
   } else {
     await mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
+
+  mainWindow.on('close', (event) => {
+    if (closeApproved) {
+      return;
+    }
+
+    event.preventDefault();
+    mainWindow?.webContents.send('app:close-requested');
+  });
 }
 
 app.whenReady().then(() => {

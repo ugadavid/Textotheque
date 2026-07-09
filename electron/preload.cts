@@ -9,6 +9,12 @@ const api = {
   updateDocument: (id: number, input: DocumentInput): Promise<TextDocument> =>
     ipcRenderer.invoke('documents:update', id, input),
   markOpened: (id: number): Promise<TextDocument> => ipcRenderer.invoke('documents:mark-opened', id),
+  onCloseRequested: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('app:close-requested', listener);
+    return () => ipcRenderer.removeListener('app:close-requested', listener);
+  },
+  approveClose: (): Promise<void> => ipcRenderer.invoke('app:approve-close'),
 };
 
 contextBridge.exposeInMainWorld('textotheque', api);

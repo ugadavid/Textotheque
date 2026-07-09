@@ -29,7 +29,7 @@ export interface DocumentInput {
 const schema = `
 CREATE TABLE IF NOT EXISTS documents (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  title TEXT NOT NULL DEFAULT 'Sans titre',
+  title TEXT NOT NULL DEFAULT '',
   content TEXT NOT NULL DEFAULT '',
   content_format TEXT NOT NULL DEFAULT 'plain' CHECK (content_format IN ('plain', 'markdown', 'rich')),
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'to_review', 'final', 'archived')),
@@ -52,6 +52,23 @@ export class TextothequeDatabase {
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.db.exec(schema);
+    this.cleanupEmptyDraftDocuments();
+  }
+
+  cleanupEmptyDraftDocuments(): number {
+    const result = this.db
+      .prepare(
+        `DELETE FROM documents
+         WHERE content_format = 'plain'
+           AND status = 'draft'
+           AND favorite = 0
+           AND (trim(title) = '' OR title = 'Sans titre')
+           AND trim(content) = ''
+           AND trim(notes) = ''`
+      )
+      .run();
+
+    return result.changes;
   }
 
   listDocuments(): TextDocument[] {
@@ -83,7 +100,7 @@ export class TextothequeDatabase {
         `INSERT INTO documents (title, content, content_format, status, favorite, created_at, updated_at, last_opened_at, notes)
          VALUES (@title, @content, 'plain', 'draft', 0, @now, @now, @now, '')`
       )
-      .run({ title: 'Sans titre', content: '', now });
+      .run({ title: '', content: '', now });
 
     const document = this.getDocument(Number(result.lastInsertRowid));
     if (!document) {
@@ -108,7 +125,7 @@ export class TextothequeDatabase {
       )
       .run({
         id,
-        title: input.title.trim() || 'Sans titre',
+        title: input.title.trim(),
         content: input.content,
         notes: input.notes,
         status: input.status,

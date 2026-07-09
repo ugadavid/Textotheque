@@ -8,6 +8,8 @@ declare global {
       getDocument: (id: number) => Promise<TextDocument | null>;
       updateDocument: (id: number, input: DocumentInput) => Promise<TextDocument>;
       markOpened: (id: number) => Promise<TextDocument>;
+      onCloseRequested: (callback: () => void) => () => void;
+      approveClose: () => Promise<void>;
     };
   }
 }
