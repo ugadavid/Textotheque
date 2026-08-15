@@ -1,15 +1,19 @@
-import type { DocumentStatus, TextDocument } from '../types/document';
+import type { DocumentStatus, Folder, TextDocument } from '../types/document';
 
 interface MetadataPaneProps {
   document: TextDocument | null;
+  folders: Folder[];
   notes: string;
   status: DocumentStatus;
   favorite: boolean;
+  folderId: number | null;
+  isDeleted: boolean;
   characterCount: number;
   wordCount: number;
   onNotesChange: (value: string) => void;
   onStatusChange: (value: DocumentStatus) => void;
   onFavoriteChange: (value: boolean) => void;
+  onFolderChange: (value: number | null) => void;
 }
 
 const statuses: DocumentStatus[] = ['draft', 'active', 'to_review', 'final', 'archived'];
@@ -24,16 +28,36 @@ function formatDate(value: string | null): string {
   }).format(new Date(value));
 }
 
+function folderLabel(folder: Folder, folders: Folder[]): string {
+  const parents: string[] = [];
+  let current = folder;
+
+  while (current.parent_id !== null) {
+    const parent = folders.find((candidate) => candidate.id === current.parent_id);
+    if (!parent) {
+      break;
+    }
+    parents.unshift(parent.name);
+    current = parent;
+  }
+
+  return parents.length > 0 ? `${parents.join(' / ')} / ${folder.name}` : folder.name;
+}
+
 export default function MetadataPane({
   document,
+  folders,
   notes,
   status,
   favorite,
+  folderId,
+  isDeleted,
   characterCount,
   wordCount,
   onNotesChange,
   onStatusChange,
   onFavoriteChange,
+  onFolderChange,
 }: MetadataPaneProps) {
   return (
     <aside className="pane metadata-pane">
@@ -80,8 +104,28 @@ export default function MetadataPane({
           </dl>
 
           <label className="field-label">
+            Dossier
+            <select
+              value={folderId ?? ''}
+              onChange={(event) => onFolderChange(event.target.value === '' ? null : Number(event.target.value))}
+              disabled={isDeleted}
+            >
+              <option value="">Non classe</option>
+              {folders.map((folder) => (
+                <option key={folder.id} value={folder.id}>
+                  {folderLabel(folder, folders)}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="field-label">
             Statut
-            <select value={status} onChange={(event) => onStatusChange(event.target.value as DocumentStatus)}>
+            <select
+              value={status}
+              onChange={(event) => onStatusChange(event.target.value as DocumentStatus)}
+              disabled={isDeleted}
+            >
               {statuses.map((statusOption) => (
                 <option key={statusOption} value={statusOption}>
                   {statusOption}
@@ -91,7 +135,12 @@ export default function MetadataPane({
           </label>
 
           <label className="checkbox-label">
-            <input type="checkbox" checked={favorite} onChange={(event) => onFavoriteChange(event.target.checked)} />
+            <input
+              type="checkbox"
+              checked={favorite}
+              onChange={(event) => onFavoriteChange(event.target.checked)}
+              disabled={isDeleted}
+            />
             Favori
           </label>
 
@@ -102,6 +151,7 @@ export default function MetadataPane({
               value={notes}
               onChange={(event) => onNotesChange(event.target.value)}
               placeholder="Notes courtes..."
+              disabled={isDeleted}
             />
           </label>
         </div>

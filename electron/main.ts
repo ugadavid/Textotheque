@@ -20,12 +20,19 @@ function getDatabase(): TextothequeDatabase {
 
 function registerIpcHandlers(): void {
   ipcMain.handle('documents:list', () => getDatabase().listDocuments());
-  ipcMain.handle('documents:create', () => getDatabase().createDocument());
+  ipcMain.handle('documents:list-deleted', () => getDatabase().listDeletedDocuments());
+  ipcMain.handle('folders:list', () => getDatabase().listFolders());
+  ipcMain.handle('folders:create', (_event, parentId: number | null) => getDatabase().createFolder(parentId));
+  ipcMain.handle('folders:rename', (_event, id: number, name: string) => getDatabase().renameFolder(id, name));
+  ipcMain.handle('documents:create', (_event, folderId: number | null) => getDatabase().createDocument(folderId));
   ipcMain.handle('documents:get', (_event, id: number) => getDatabase().getDocument(id));
   ipcMain.handle('documents:update', (_event, id: number, input: DocumentInput) =>
     getDatabase().updateDocument(id, input)
   );
   ipcMain.handle('documents:mark-opened', (_event, id: number) => getDatabase().markOpened(id));
+  ipcMain.handle('documents:trash', (_event, id: number) => getDatabase().trashDocument(id));
+  ipcMain.handle('documents:restore', (_event, id: number) => getDatabase().restoreDocument(id));
+  ipcMain.handle('documents:empty-trash', () => getDatabase().emptyTrash());
   ipcMain.handle('app:approve-close', () => {
     closeApproved = true;
     mainWindow?.close();

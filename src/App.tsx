@@ -10,16 +10,31 @@ import {
 import EditorPane from './components/EditorPane';
 import MetadataPane from './components/MetadataPane';
 import NavigationPane from './components/NavigationPane';
-import { createDocument, listDocuments, saveDocument, selectDocument } from './services/documents';
-import type { DocumentStatus, TextDocument } from './types/document';
+import StatusBar from './components/StatusBar';
+import {
+  createFolder,
+  createDocument,
+  emptyTrash,
+  listDeletedDocuments,
+  listFolders,
+  listDocuments,
+  renameFolder,
+  restoreDocument,
+  saveDocument,
+  selectDocument,
+  trashDocument,
+} from './services/documents';
+import type { DocumentStatus, Folder, TextDocument } from './types/document';
 
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 type ResizeTarget = 'left' | 'right';
+type DocumentView = 'all' | 'unfiled' | 'folder' | 'trash';
 
 const UNSAVED_CHANGES_MESSAGE =
   'Ce document contient des modifications non sauvegardees. Voulez-vous vraiment continuer sans sauvegarder ?';
 const PANE_STORAGE_KEY = 'textotheque:pane-widths:v1';
 const UNTITLED_FALLBACK = 'Sans titre';
+const APP_VERSION = '0.1.13';
 
 interface PaneWidths {
   left: number;
@@ -27,6 +42,11 @@ interface PaneWidths {
 }
 
 interface ConfirmDialogState {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  danger?: boolean;
+  focusAfterCancel?: boolean;
   resolve: (confirmed: boolean) => void;
 }
 
@@ -64,16 +84,22 @@ function titleForEditing(title: string): string {
 
 export default function App() {
   const [documents, setDocuments] = useState<TextDocument[]>([]);
+  const [deletedDocuments, setDeletedDocuments] = useState<TextDocument[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [documentView, setDocumentView] = useState<DocumentView>('all');
+  const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null);
   const [selectedDocument, setSelectedDocument] = useState<TextDocument | null>(null);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [notes, setNotes] = useState('');
   const [status, setStatus] = useState<DocumentStatus>('draft');
   const [favorite, setFavorite] = useState(false);
+  const [folderId, setFolderId] = useState<number | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [paneWidths, setPaneWidths] = useState<PaneWidths>(() => loadPaneWidths());
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const shellRef = useRef<HTMLElement | null>(null);
   const isDirtyRef = useRef(false);
 
@@ -83,12 +109,68 @@ export default function App() {
 
   const characterCount = content.length;
   const wordCount = useMemo(() => content.trim().split(/\s+/).filter(Boolean).length, [content]);
+  const selectedFolder = useMemo(
+    () => folders.find((folder) => folder.id === selectedFolderId) ?? null,
+    [folders, selectedFolderId]
+  );
+  const currentDocuments = useMemo(() => {
+    if (documentView === 'trash') {
+      return deletedDocuments;
+    }
+    if (documentView === 'unfiled') {
+      return documents.filter((document) => document.folder_id === null);
+    }
+    if (documentView === 'folder') {
+      return selectedFolderId === null ? [] : documents.filter((document) => document.folder_id === selectedFolderId);
+    }
+    return documents;
+  }, [deletedDocuments, documentView, documents, selectedFolderId]);
+  const unfiledCount = useMemo(
+    () => documents.filter((document) => document.folder_id === null).length,
+    [documents]
+  );
+  const folderDocumentCounts = useMemo(
+    () =>
+      documents.reduce<Record<number, number>>((counts, document) => {
+        if (document.folder_id !== null) {
+          counts[document.folder_id] = (counts[document.folder_id] ?? 0) + 1;
+        }
+        return counts;
+      }, {}),
+    [documents]
+  );
+  const viewContextLabel = useMemo(() => {
+    if (documentView === 'trash') {
+      return 'Corbeille';
+    }
+    if (documentView === 'unfiled') {
+      return 'Non classes';
+    }
+    if (documentView === 'folder') {
+      return selectedFolder ? `Dossier: ${selectedFolder.name}` : 'Dossier';
+    }
+    return 'Tous les textes';
+  }, [documentView, selectedFolder]);
+  const visibleDocuments = useMemo(() => {
+    const normalizedSearch = searchQuery.trim().toLocaleLowerCase('fr-FR');
+    if (!normalizedSearch) {
+      return currentDocuments;
+    }
+
+    return currentDocuments.filter((document) => {
+      const titleValue = (document.title.trim() || UNTITLED_FALLBACK).toLocaleLowerCase('fr-FR');
+      const contentValue = document.content.toLocaleLowerCase('fr-FR');
+      return titleValue.includes(normalizedSearch) || contentValue.includes(normalizedSearch);
+    });
+  }, [currentDocuments, searchQuery]);
+  const selectedDocumentIsDeleted = Boolean(selectedDocument?.deleted_at);
   const isDirty = Boolean(
     selectedDocument &&
       (title !== titleForEditing(selectedDocument.title) ||
         content !== selectedDocument.content ||
         notes !== selectedDocument.notes ||
         status !== selectedDocument.status ||
+        folderId !== selectedDocument.folder_id ||
         favorite !== (selectedDocument.favorite === 1))
   );
   const displayedSaveState: SaveState = isDirty ? 'dirty' : saveState;
@@ -107,22 +189,72 @@ export default function App() {
     });
   }, []);
 
+  const focusSearch = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      const searchInput = document.querySelector<HTMLInputElement>('.search-input-row input');
+      searchInput?.focus();
+      searchInput?.select();
+    });
+  }, []);
+
+  const focusTitle = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      const titleInput = document.querySelector<HTMLInputElement>('.title-input:not(:disabled)');
+      titleInput?.focus();
+      titleInput?.select();
+    });
+  }, []);
+
+  const confirmAction = useCallback(
+    async (dialog: Omit<ConfirmDialogState, 'resolve'>) =>
+      new Promise<boolean>((resolve) => {
+        setConfirmDialog({ ...dialog, resolve });
+      }),
+    []
+  );
+
   const confirmDiscardUnsavedChanges = useCallback(async () => {
     if (!isDirtyRef.current) {
       return true;
     }
 
-    return new Promise<boolean>((resolve) => {
-      setConfirmDialog({ resolve });
+    return confirmAction({
+      title: 'Modifications non sauvegardees',
+      message: UNSAVED_CHANGES_MESSAGE,
+      confirmLabel: 'Continuer sans sauvegarder',
+      danger: true,
+      focusAfterCancel: true,
     });
-  }, []);
+  }, [confirmAction]);
 
-  function resolveDiscardConfirmation(confirmed: boolean) {
-    const resolve = confirmDialog?.resolve;
+  async function confirmMoveToTrash() {
+    return new Promise<boolean>((resolve) => {
+      setConfirmDialog({
+        title: 'Deplacer vers la corbeille',
+        message: 'Deplacer ce document vers la corbeille ? Vous pourrez le restaurer ensuite.',
+        confirmLabel: 'Deplacer',
+        danger: true,
+        resolve,
+      });
+    });
+  }
+
+  async function confirmEmptyTrash(count: number) {
+    return confirmAction({
+      title: 'Vider la corbeille',
+      message: `Vider la corbeille ? ${count} document(s) seront supprimes definitivement.`,
+      confirmLabel: 'Vider',
+      danger: true,
+    });
+  }
+
+  function resolveConfirmation(confirmed: boolean) {
+    const dialog = confirmDialog;
+    const resolve = dialog?.resolve;
     setConfirmDialog(null);
     resolve?.(confirmed);
 
-    if (!confirmed) {
+    if (!confirmed && dialog?.focusAfterCancel) {
       focusEditor();
     }
   }
@@ -151,23 +283,54 @@ export default function App() {
     };
   }, [confirmDiscardUnsavedChanges]);
 
-  async function refreshDocuments(nextSelectedId?: number) {
-    const nextDocuments = await listDocuments();
-    setDocuments(nextDocuments);
+  function documentsForView(
+    activeDocuments: TextDocument[],
+    trashDocuments: TextDocument[],
+    view: DocumentView,
+    targetFolderId: number | null
+  ) {
+    if (view === 'trash') {
+      return trashDocuments;
+    }
+    if (view === 'unfiled') {
+      return activeDocuments.filter((document) => document.folder_id === null);
+    }
+    if (view === 'folder') {
+      return targetFolderId === null ? [] : activeDocuments.filter((document) => document.folder_id === targetFolderId);
+    }
+    return activeDocuments;
+  }
 
-    if (nextDocuments.length === 0) {
+  async function refreshDocuments(
+    nextSelectedId?: number,
+    viewOverride: DocumentView = documentView,
+    folderOverride: number | null = selectedFolderId
+  ) {
+    const [nextDocuments, nextDeletedDocuments, nextFolders] = await Promise.all([
+      listDocuments(),
+      listDeletedDocuments(),
+      listFolders(),
+    ]);
+    setDocuments(nextDocuments);
+    setDeletedDocuments(nextDeletedDocuments);
+    setFolders(nextFolders);
+
+    const nextCurrentDocuments = documentsForView(nextDocuments, nextDeletedDocuments, viewOverride, folderOverride);
+
+    if (nextCurrentDocuments.length === 0) {
       setSelectedDocument(null);
       setTitle('');
       setContent('');
       setNotes('');
       setStatus('draft');
       setFavorite(false);
+      setFolderId(null);
       setSaveState('idle');
       return;
     }
 
-    const targetId = nextSelectedId ?? selectedDocument?.id ?? nextDocuments[0].id;
-    const nextSelected = nextDocuments.find((document) => document.id === targetId) ?? nextDocuments[0];
+    const targetId = nextSelectedId ?? selectedDocument?.id ?? nextCurrentDocuments[0].id;
+    const nextSelected = nextCurrentDocuments.find((document) => document.id === targetId) ?? nextCurrentDocuments[0];
     applyDocument(nextSelected);
   }
 
@@ -178,6 +341,7 @@ export default function App() {
     setNotes(document.notes);
     setStatus(document.status);
     setFavorite(document.favorite === 1);
+    setFolderId(document.folder_id);
     setSaveState('saved');
     setError(null);
   }
@@ -188,19 +352,67 @@ export default function App() {
     }
   }
 
+  async function handleChangeDocumentView(nextView: DocumentView, nextFolderId: number | null = null) {
+    if (nextView === documentView && nextFolderId === selectedFolderId) {
+      return;
+    }
+
+    if (!(await confirmDiscardUnsavedChanges())) {
+      return;
+    }
+
+    setDocumentView(nextView);
+    setSelectedFolderId(nextFolderId);
+    setError(null);
+    await refreshDocuments(undefined, nextView, nextFolderId);
+  }
+
   async function handleCreateDocument() {
     if (!(await confirmDiscardUnsavedChanges())) {
       return;
     }
 
+    const targetFolderId =
+      documentView === 'folder'
+        ? selectedFolderId
+        : selectedDocument && !selectedDocumentIsDeleted
+          ? selectedDocument.folder_id
+          : null;
+    const targetView = targetFolderId === null ? 'all' : 'folder';
+
+    setDocumentView(targetView);
+    setSelectedFolderId(targetFolderId);
     setError(null);
-    const document = await createDocument();
-    await refreshDocuments(document.id);
+    const document = await createDocument(targetFolderId);
+    await refreshDocuments(document.id, targetView, targetFolderId);
     focusEditor();
   }
 
-  async function handleSelectDocument(id: number) {
+  async function handleCreateFolder(parentId: number | null = null) {
+    if (!(await confirmDiscardUnsavedChanges())) {
+      return;
+    }
+
+    setError(null);
+    const folder = await createFolder(parentId);
+    setDocumentView('folder');
+    setSelectedFolderId(folder.id);
+    await refreshDocuments(undefined, 'folder', folder.id);
+  }
+
+  async function handleRenameFolder(id: number, name: string) {
+    setError(null);
+    const folder = await renameFolder(id, name);
+    setFolders((currentFolders) => currentFolders.map((item) => (item.id === folder.id ? folder : item)));
+    await refreshDocuments(selectedDocument?.id, documentView, selectedFolderId);
+  }
+
+  async function handleSelectDocument(id: number, nextView?: DocumentView, nextFolderId?: number | null) {
     if (id === selectedDocument?.id) {
+      if (nextView) {
+        setDocumentView(nextView);
+        setSelectedFolderId(nextFolderId ?? null);
+      }
       return;
     }
 
@@ -211,8 +423,12 @@ export default function App() {
     setError(null);
     const document = await selectDocument(id);
     if (document) {
+      if (nextView) {
+        setDocumentView(nextView);
+        setSelectedFolderId(nextFolderId ?? null);
+      }
       applyDocument(document);
-      await refreshDocuments(document.id);
+      await refreshDocuments(document.id, nextView ?? documentView, nextFolderId ?? selectedFolderId);
       focusEditor();
     }
   }
@@ -232,15 +448,134 @@ export default function App() {
         notes,
         status,
         favorite,
+        folder_id: folderId,
       });
+      let nextView = documentView;
+      let nextFolderId = selectedFolderId;
+
+      if (documentView === 'folder' || documentView === 'unfiled') {
+        if (saved.folder_id === null) {
+          nextView = 'unfiled';
+          nextFolderId = null;
+        } else {
+          nextView = 'folder';
+          nextFolderId = saved.folder_id;
+        }
+        setDocumentView(nextView);
+        setSelectedFolderId(nextFolderId);
+      }
+
       applyDocument(saved);
-      await refreshDocuments(saved.id);
+      await refreshDocuments(saved.id, nextView, nextFolderId);
       setSaveState('saved');
     } catch (saveError) {
       setSaveState('error');
       setError(saveError instanceof Error ? saveError.message : 'Sauvegarde impossible.');
     }
   }
+
+  async function handleTrashCurrentDocument() {
+    if (!selectedDocument || selectedDocumentIsDeleted) {
+      return;
+    }
+
+    if (isDirty) {
+      setError('Sauvegardez ou annulez les modifications avant de deplacer ce document vers la corbeille.');
+      focusEditor();
+      return;
+    }
+
+    if (!(await confirmMoveToTrash())) {
+      return;
+    }
+
+    setError(null);
+    await trashDocument(selectedDocument.id);
+    await refreshDocuments(undefined, 'all', null);
+  }
+
+  async function handleRestoreCurrentDocument() {
+    if (!selectedDocument || !selectedDocumentIsDeleted) {
+      return;
+    }
+
+    setError(null);
+    const restored = await restoreDocument(selectedDocument.id);
+    setDocumentView('all');
+    setSelectedFolderId(null);
+    await refreshDocuments(restored.id, 'all', null);
+    focusEditor();
+  }
+
+  async function handleEmptyTrash() {
+    if (documentView !== 'trash' || deletedDocuments.length === 0) {
+      return;
+    }
+
+    if (!(await confirmEmptyTrash(deletedDocuments.length))) {
+      return;
+    }
+
+    setError(null);
+    await emptyTrash();
+    await refreshDocuments(undefined, 'trash', null);
+  }
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      const key = event.key.toLowerCase();
+      const usesCtrl = event.ctrlKey || event.metaKey;
+
+      if (usesCtrl && key === 's') {
+        event.preventDefault();
+        if (selectedDocument && !selectedDocumentIsDeleted && saveState !== 'saving') {
+          void handleSave();
+        }
+        return;
+      }
+
+      if (usesCtrl && key === 'n') {
+        event.preventDefault();
+        void handleCreateDocument();
+        return;
+      }
+
+      if (usesCtrl && key === 'f') {
+        event.preventDefault();
+        focusSearch();
+        return;
+      }
+
+      if (event.key === 'Escape') {
+        if (confirmDialog) {
+          event.preventDefault();
+          resolveConfirmation(false);
+          return;
+        }
+
+        const activeElement = document.activeElement;
+        if (
+          activeElement instanceof HTMLInputElement &&
+          activeElement.matches('.search-input-row input') &&
+          searchQuery.trim().length > 0
+        ) {
+          event.preventDefault();
+          setSearchQuery('');
+        }
+        return;
+      }
+
+      if (event.key === 'F2') {
+        if (selectedDocument && !selectedDocumentIsDeleted) {
+          event.preventDefault();
+          focusTitle();
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  });
 
   function startPaneResize(target: ResizeTarget, pointerDownEvent: ReactPointerEvent<HTMLButtonElement>) {
     const shell = shellRef.current;
@@ -284,88 +619,134 @@ export default function App() {
   }
 
   return (
-    <main
-      className="app-shell"
-      ref={shellRef}
-      style={
-        {
-          '--left-pane-width': `${paneWidths.left}%`,
-          '--right-pane-width': `${paneWidths.right}%`,
-        } as CSSProperties
-      }
-    >
-      <NavigationPane
-        documents={documents}
-        selectedDocumentId={selectedDocument?.id ?? null}
-        dirtyDocumentId={isDirty ? selectedDocument?.id ?? null : null}
-        onCreateDocument={handleCreateDocument}
-        onSelectDocument={handleSelectDocument}
-      />
-      <button
-        className="resize-handle"
-        type="button"
-        aria-label="Redimensionner le volet gauche"
-        onPointerDown={(event) => startPaneResize('left', event)}
-      />
-      <EditorPane
-        document={selectedDocument}
-        title={title}
-        content={content}
-        saveState={displayedSaveState}
-        isDirty={isDirty}
-        error={error}
-        onTitleChange={(value) => {
-          setTitle(value);
-          markDirty();
-        }}
-        onContentChange={(value) => {
-          setContent(value);
-          markDirty();
-        }}
-        onSave={handleSave}
-      />
-      <button
-        className="resize-handle"
-        type="button"
-        aria-label="Redimensionner le volet droit"
-        onPointerDown={(event) => startPaneResize('right', event)}
-      />
-      <MetadataPane
-        document={selectedDocument}
-        notes={notes}
+    <div className="app-root">
+      <main
+        className="app-shell"
+        ref={shellRef}
+        style={
+          {
+            '--left-pane-width': `${paneWidths.left}%`,
+            '--right-pane-width': `${paneWidths.right}%`,
+          } as CSSProperties
+        }
+      >
+        <NavigationPane
+          documents={visibleDocuments}
+          allDocuments={documents}
+          folders={folders}
+          currentView={documentView}
+          selectedFolderId={selectedFolderId}
+          activeCount={documents.length}
+          unfiledCount={unfiledCount}
+          folderDocumentCounts={folderDocumentCounts}
+          trashCount={deletedDocuments.length}
+          totalDocuments={currentDocuments.length}
+          searchQuery={searchQuery}
+          selectedDocumentId={selectedDocument?.id ?? null}
+          dirtyDocumentId={isDirty ? selectedDocument?.id ?? null : null}
+          onViewChange={handleChangeDocumentView}
+          onSearchChange={setSearchQuery}
+          onClearSearch={() => setSearchQuery('')}
+          onCreateDocument={handleCreateDocument}
+          onCreateFolder={handleCreateFolder}
+          onRenameFolder={handleRenameFolder}
+          onSelectDocument={handleSelectDocument}
+          onEmptyTrash={handleEmptyTrash}
+        />
+        <button
+          className="resize-handle"
+          type="button"
+          aria-label="Redimensionner le volet gauche"
+          onPointerDown={(event) => startPaneResize('left', event)}
+        />
+        <EditorPane
+          document={selectedDocument}
+          title={title}
+          content={content}
+          saveState={displayedSaveState}
+          isDirty={isDirty}
+          error={error}
+          isDeleted={selectedDocumentIsDeleted}
+          onTitleChange={(value) => {
+            setTitle(value);
+            markDirty();
+          }}
+          onContentChange={(value) => {
+            setContent(value);
+            markDirty();
+          }}
+          onSave={handleSave}
+          onTrash={handleTrashCurrentDocument}
+          onRestore={handleRestoreCurrentDocument}
+        />
+        <button
+          className="resize-handle"
+          type="button"
+          aria-label="Redimensionner le volet droit"
+          onPointerDown={(event) => startPaneResize('right', event)}
+        />
+        <MetadataPane
+          document={selectedDocument}
+          folders={folders}
+          notes={notes}
+          status={status}
+          favorite={favorite}
+          folderId={folderId}
+          isDeleted={selectedDocumentIsDeleted}
+          characterCount={characterCount}
+          wordCount={wordCount}
+          onNotesChange={(value) => {
+            setNotes(value);
+            markDirty();
+          }}
+          onStatusChange={(value) => {
+            setStatus(value);
+            markDirty();
+          }}
+          onFavoriteChange={(value) => {
+            setFavorite(value);
+            markDirty();
+          }}
+          onFolderChange={(value) => {
+            setFolderId(value);
+            markDirty();
+          }}
+        />
+      </main>
+      <StatusBar
+        totalDocuments={currentDocuments.length}
+        visibleDocuments={visibleDocuments.length}
+        searchQuery={searchQuery}
+        currentView={documentView}
+        contextLabel={viewContextLabel}
+        trashCount={deletedDocuments.length}
+        selectedDocument={selectedDocument}
         status={status}
-        favorite={favorite}
+        saveState={displayedSaveState}
         characterCount={characterCount}
         wordCount={wordCount}
-        onNotesChange={(value) => {
-          setNotes(value);
-          markDirty();
-        }}
-        onStatusChange={(value) => {
-          setStatus(value);
-          markDirty();
-        }}
-        onFavoriteChange={(value) => {
-          setFavorite(value);
-          markDirty();
-        }}
+        version={APP_VERSION}
       />
       {confirmDialog ? (
         <div className="confirm-backdrop" role="presentation">
-          <section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="discard-title">
-            <h2 id="discard-title">Modifications non sauvegardees</h2>
-            <p>{UNSAVED_CHANGES_MESSAGE}</p>
+          <section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+            <h2 id="confirm-title">{confirmDialog.title}</h2>
+            <p>{confirmDialog.message}</p>
             <div className="confirm-actions">
-              <button className="secondary-button" type="button" onClick={() => resolveDiscardConfirmation(false)}>
+              <button className="secondary-button" type="button" onClick={() => resolveConfirmation(false)}>
                 Annuler
               </button>
-              <button className="danger-button" type="button" onClick={() => resolveDiscardConfirmation(true)}>
-                Continuer sans sauvegarder
+              <button
+                className={confirmDialog.danger ? 'danger-button' : 'primary-button'}
+                type="button"
+                onClick={() => resolveConfirmation(true)}
+              >
+                {confirmDialog.confirmLabel}
               </button>
             </div>
           </section>
         </div>
       ) : null}
-    </main>
+    </div>
   );
 }

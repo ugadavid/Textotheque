@@ -5,11 +5,26 @@ CREATE TABLE IF NOT EXISTS documents (
   content_format TEXT NOT NULL DEFAULT 'plain' CHECK (content_format IN ('plain', 'markdown', 'rich')),
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'to_review', 'final', 'archived')),
   favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1)),
+  folder_id INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   last_opened_at TEXT,
+  deleted_at TEXT,
   notes TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS folders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  parent_id INTEGER,
+  position INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY (parent_id) REFERENCES folders(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_documents_updated_at ON documents(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_documents_last_opened_at ON documents(last_opened_at DESC);
+CREATE INDEX IF NOT EXISTS idx_documents_deleted_at ON documents(deleted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_documents_folder_id ON documents(folder_id);
+CREATE INDEX IF NOT EXISTS idx_folders_parent_id ON folders(parent_id);

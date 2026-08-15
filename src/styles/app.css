@@ -24,6 +24,15 @@ textarea {
   font: inherit;
 }
 
+.app-root {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 30px;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+  background: #f5f2ec;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns:
@@ -32,7 +41,7 @@ textarea {
     minmax(360px, 1fr)
     6px
     minmax(240px, var(--right-pane-width, 24%));
-  height: 100vh;
+  min-height: 0;
   overflow: hidden;
   background: #f5f2ec;
 }
@@ -141,6 +150,273 @@ h2 {
   color: #53483f;
 }
 
+.nav-view-switch {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.nav-view-button {
+  display: flex;
+  min-width: 0;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid #d7d0c4;
+  border-radius: 6px;
+  background: #fffdf9;
+  color: #51473f;
+  cursor: pointer;
+  padding: 0 9px;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.nav-view-button.selected {
+  border-color: #2f675c;
+  background: #eef7f1;
+  color: #204d45;
+}
+
+.nav-view-button span {
+  color: #75695e;
+  font-weight: 800;
+}
+
+.empty-trash-button {
+  min-height: 34px;
+  margin-bottom: 12px;
+  border: 1px solid #8e3f28;
+  border-radius: 6px;
+  background: #fffdf9;
+  color: #8e3f28;
+  cursor: pointer;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.empty-trash-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.folder-section {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #ebe4d8;
+}
+
+.folder-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #51473f;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.folder-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.folder-actions button {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  border: 1px solid #d7d0c4;
+  border-radius: 6px;
+  background: #fffdf9;
+  color: #51473f;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.folder-list {
+  display: grid;
+  gap: 4px;
+}
+
+.folder-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 4px;
+  align-items: center;
+}
+
+.folder-toggle-button {
+  display: grid;
+  width: 24px;
+  min-width: 24px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #75695e;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 900;
+  padding: 0;
+}
+
+.folder-toggle-button:hover,
+.folder-toggle-button:focus-visible {
+  border-color: #d7d0c4;
+  background: #fffdf9;
+  outline: none;
+}
+
+.folder-button {
+  display: flex;
+  min-width: 0;
+  min-height: 30px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #51473f;
+  cursor: pointer;
+  font-size: 0.84rem;
+  font-weight: 700;
+  text-align: left;
+}
+
+.folder-button.selected {
+  border-color: #2f675c;
+  background: #eef7f1;
+  color: #204d45;
+}
+
+.folder-button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-button strong {
+  color: #75695e;
+  font-size: 0.78rem;
+}
+
+.folder-rename-button {
+  min-height: 28px;
+  border: 1px solid #d7d0c4;
+  border-radius: 6px;
+  background: #fffdf9;
+  color: #51473f;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 800;
+  padding: 0 6px;
+}
+
+.folder-name-input {
+  grid-column: 1 / -1;
+  min-width: 0;
+  min-height: 30px;
+  border: 1px solid #2f675c;
+  border-radius: 6px;
+  background: #fffdf9;
+  color: #201d18;
+  outline: none;
+  padding: 5px 8px;
+}
+
+.unfiled-tree-section {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #ebe4d8;
+}
+
+.tree-document-list {
+  display: grid;
+  gap: 4px;
+}
+
+.tree-document-button {
+  grid-column: 1 / -1;
+  display: flex;
+  min-width: 0;
+  min-height: 28px;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #51473f;
+  cursor: pointer;
+  font-size: 0.82rem;
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.tree-document-button.selected {
+  border-color: #2f675c;
+  background: #eef7f1;
+  color: #204d45;
+}
+
+.tree-document-button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-empty {
+  margin: 0;
+  color: #75695e;
+  font-size: 0.82rem;
+}
+
+.search-field {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: #51473f;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.search-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.search-input-row input {
+  min-width: 0;
+  border: 1px solid #d7d0c4;
+  border-radius: 6px;
+  background: #fffdf9;
+  color: #201d18;
+  outline: none;
+  padding: 8px 10px;
+}
+
+.search-input-row input:focus {
+  border-color: #2f675c;
+  box-shadow: 0 0 0 3px rgba(47, 103, 92, 0.12);
+}
+
+.clear-search-button {
+  width: 34px;
+  min-width: 34px;
+  border: 1px solid #d7d0c4;
+  border-radius: 6px;
+  background: #fffdf9;
+  color: #51473f;
+  cursor: pointer;
+  font-weight: 800;
+}
+
 .document-list {
   display: flex;
   flex: 1;
@@ -240,6 +516,11 @@ h2 {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.trash-button {
+  border-color: #8e3f28;
+  color: #8e3f28;
 }
 
 .save-state {
@@ -349,6 +630,13 @@ select,
   padding: 9px 10px;
 }
 
+input:disabled,
+select:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
 .notes-editor {
   min-height: 120px;
   resize: vertical;
@@ -366,7 +654,7 @@ select,
 .resize-handle {
   width: 6px;
   min-width: 6px;
-  height: 100vh;
+  height: 100%;
   border: 0;
   border-right: 1px solid #d7d0c4;
   border-left: 1px solid #d7d0c4;
@@ -410,6 +698,34 @@ select,
   justify-content: flex-end;
   gap: 10px;
   margin-top: 20px;
+}
+
+.status-bar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0;
+  border-top: 1px solid #d7d0c4;
+  background: #efe9df;
+  color: #51473f;
+  font-size: 0.78rem;
+  line-height: 1;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.status-bar span {
+  display: inline-flex;
+  max-width: 220px;
+  min-width: 0;
+  align-items: center;
+  overflow: hidden;
+  padding: 0 10px;
+  text-overflow: ellipsis;
+}
+
+.status-bar span + span {
+  border-left: 1px solid #d2c8ba;
 }
 
 @media (max-width: 1100px) {

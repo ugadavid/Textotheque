@@ -7,9 +7,12 @@ interface EditorPaneProps {
   saveState: 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
   isDirty: boolean;
   error: string | null;
+  isDeleted: boolean;
   onTitleChange: (value: string) => void;
   onContentChange: (value: string) => void;
   onSave: () => void;
+  onTrash: () => void;
+  onRestore: () => void;
 }
 
 const saveLabels = {
@@ -27,9 +30,12 @@ export default function EditorPane({
   saveState,
   isDirty,
   error,
+  isDeleted,
   onTitleChange,
   onContentChange,
   onSave,
+  onTrash,
+  onRestore,
 }: EditorPaneProps) {
   if (!document) {
     return (
@@ -51,13 +57,31 @@ export default function EditorPane({
             onChange={(event) => onTitleChange(event.target.value)}
             placeholder="Sans titre"
             aria-label="Titre du document"
+            disabled={isDeleted}
           />
         </div>
         <div className="save-controls">
           <span className={`save-state ${saveState}`}>{saveLabels[saveState]}</span>
-          <button className="primary-button" type="button" onClick={onSave} disabled={saveState === 'saving'}>
-            Sauvegarder
-          </button>
+          {isDeleted ? (
+            <button className="primary-button" type="button" onClick={onRestore}>
+              Restaurer
+            </button>
+          ) : (
+            <>
+              <button className="secondary-button trash-button" type="button" onClick={onTrash}>
+                Corbeille
+              </button>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={onSave}
+                disabled={saveState === 'saving'}
+                title="Sauvegarder - Ctrl+S"
+              >
+                Sauvegarder
+              </button>
+            </>
+          )}
         </div>
       </header>
 
@@ -69,6 +93,7 @@ export default function EditorPane({
         onChange={(event) => onContentChange(event.target.value)}
         placeholder="Ecrire ici..."
         spellCheck="true"
+        disabled={isDeleted}
       />
     </section>
   );

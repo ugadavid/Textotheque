@@ -1,6 +1,6 @@
 {
   "name": "textotheque",
-  "version": "0.1.4",
+  "version": "0.1.13",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.js",
@@ -14,7 +14,8 @@
     "test:db": "tsc -p electron/tsconfig.json && electron scripts/electron-db-check.cjs",
     "test:preload": "tsc -p electron/tsconfig.json && electron scripts/electron-preload-api-check.cjs",
     "test:ui-safeguards": "npm run build && electron scripts/electron-ui-safeguards-check.cjs",
-    "test:electron-sqlite": "electron scripts/electron-sqlite-smoke.cjs"
+    "test:electron-sqlite": "electron scripts/electron-sqlite-smoke.cjs",
+    "test:legacy-migration": "tsc -p electron/tsconfig.json && electron scripts/electron-legacy-migration-check.cjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",

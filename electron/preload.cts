@@ -1,14 +1,22 @@
-import type { DocumentInput, TextDocument } from './database.js';
+import type { DocumentInput, Folder, TextDocument } from './database.js';
 
 const { contextBridge, ipcRenderer } = require('electron') as typeof import('electron');
 
 const api = {
   listDocuments: (): Promise<TextDocument[]> => ipcRenderer.invoke('documents:list'),
-  createDocument: (): Promise<TextDocument> => ipcRenderer.invoke('documents:create'),
+  listDeletedDocuments: (): Promise<TextDocument[]> => ipcRenderer.invoke('documents:list-deleted'),
+  listFolders: (): Promise<Folder[]> => ipcRenderer.invoke('folders:list'),
+  createFolder: (parentId: number | null): Promise<Folder> => ipcRenderer.invoke('folders:create', parentId),
+  renameFolder: (id: number, name: string): Promise<Folder> => ipcRenderer.invoke('folders:rename', id, name),
+  createDocument: (folderId: number | null = null): Promise<TextDocument> =>
+    ipcRenderer.invoke('documents:create', folderId),
   getDocument: (id: number): Promise<TextDocument | null> => ipcRenderer.invoke('documents:get', id),
   updateDocument: (id: number, input: DocumentInput): Promise<TextDocument> =>
     ipcRenderer.invoke('documents:update', id, input),
   markOpened: (id: number): Promise<TextDocument> => ipcRenderer.invoke('documents:mark-opened', id),
+  trashDocument: (id: number): Promise<TextDocument> => ipcRenderer.invoke('documents:trash', id),
+  restoreDocument: (id: number): Promise<TextDocument> => ipcRenderer.invoke('documents:restore', id),
+  emptyTrash: (): Promise<number> => ipcRenderer.invoke('documents:empty-trash'),
   onCloseRequested: (callback: () => void): (() => void) => {
     const listener = () => callback();
     ipcRenderer.on('app:close-requested', listener);

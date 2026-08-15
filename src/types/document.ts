@@ -8,10 +8,21 @@ export interface TextDocument {
   content_format: ContentFormat;
   status: DocumentStatus;
   favorite: number;
+  folder_id: number | null;
   created_at: string;
   updated_at: string;
   last_opened_at: string | null;
+  deleted_at: string | null;
   notes: string;
+}
+
+export interface Folder {
+  id: number;
+  name: string;
+  parent_id: number | null;
+  position: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface DocumentInput {
@@ -20,4 +31,5 @@ export interface DocumentInput {
   notes: string;
   status: DocumentStatus;
   favorite: boolean;
+  folder_id: number | null;
 }
