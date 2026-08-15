@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, type SaveDialogOptions } from 'electron';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -44,6 +44,33 @@ function registerIpcHandler<Args extends unknown[], Result>(
 }
 
 function registerIpcHandlers(): void {
+  registerIpcHandler('library:get-info', () => getDatabase().getLibraryInfo());
+  registerIpcHandler('library:backup', async () => {
+    const library = getDatabase();
+    const libraryInfo = library.getLibraryInfo();
+    const now = new Date();
+    const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+    const baseName = path.basename(libraryInfo.fileName, path.extname(libraryInfo.fileName));
+    const options: SaveDialogOptions = {
+      title: 'Sauvegarder une copie de la bibliothèque',
+      defaultPath: path.join(path.dirname(libraryInfo.path), `${baseName}_backup_${timestamp}.sqlite`),
+      buttonLabel: 'Sauvegarder la copie',
+      filters: [{ name: 'Bibliothèque SQLite', extensions: ['sqlite'] }],
+      properties: ['showOverwriteConfirmation'],
+    };
+    const result = mainWindow
+      ? await dialog.showSaveDialog(mainWindow, options)
+      : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) {
+      return { canceled: true, path: null, fileName: null, error: null };
+    }
+    if (library.isCurrentLibraryPath(result.filePath)) {
+      return { canceled: false, path: null, fileName: null, error: 'same-source' };
+    }
+
+    const inspection = await library.backupTo(result.filePath);
+    return { canceled: false, path: inspection.path, fileName: inspection.fileName, error: null };
+  });
   registerIpcHandler('documents:list', () => getDatabase().listDocuments());
   registerIpcHandler('documents:list-deleted', () => getDatabase().listDeletedDocuments());
   registerIpcHandler('folders:list', () => getDatabase().listFolders());

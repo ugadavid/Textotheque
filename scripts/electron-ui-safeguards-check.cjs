@@ -63,6 +63,7 @@ let documents = [
 ];
 
 let folders = [];
+let libraryBackupInvocations = 0;
 const forcedFailureCounts = new Map();
 
 function forceFailures(channel, count = 1) {
@@ -85,6 +86,20 @@ function cloneDocument(document) {
 app
   .whenReady()
   .then(async () => {
+    ipcMain.handle('library:get-info', () => ({
+      path: 'C:\\temporary\\test-ui.sqlite',
+      fileName: 'test-ui.sqlite',
+      applicationId: 1413830735,
+      userVersion: 2,
+      isTextotheque: true,
+    }));
+    ipcMain.handle('library:backup', () => {
+      rejectIfForced('library:backup');
+      libraryBackupInvocations += 1;
+      return libraryBackupInvocations === 1
+        ? { canceled: true, path: null, fileName: null, error: null }
+        : { canceled: false, path: 'C:\\temporary\\backup.sqlite', fileName: 'backup.sqlite', error: null };
+    });
     ipcMain.handle('documents:list', () => {
       rejectIfForced('documents:list');
       return documents.filter((document) => !document.deleted_at).map(cloneDocument);
@@ -300,6 +315,30 @@ app
           () => document.querySelector('.status-bar')?.textContent.includes('v' + expectedAppVersion),
           'status package version'
         );
+        await waitFor(
+          () => document.querySelector('.status-bar .library-name')?.textContent.includes('test-ui.sqlite'),
+          'current library name in status bar'
+        );
+        if (document.querySelector('.status-bar .library-name').title !== ${JSON.stringify('C:\\temporary\\test-ui.sqlite')}) {
+          throw new Error('current library full path tooltip missing');
+        }
+        const libraryBackupButton = document.querySelector('.library-backup-button');
+        if (!libraryBackupButton || !libraryBackupButton.textContent.includes('Copie bibliothèque')) {
+          throw new Error('library backup action missing');
+        }
+        libraryBackupButton.click();
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        if (document.querySelector('.success-message') || document.querySelector('.error-message')) {
+          throw new Error('canceling library backup should not show feedback as success or error');
+        }
+        libraryBackupButton.click();
+        await waitFor(
+          () => document.querySelector('.success-message')?.textContent.includes('backup.sqlite'),
+          'library backup success feedback'
+        );
+        if (document.querySelector('.error-message')) {
+          throw new Error('successful library backup should not show an error');
+        }
         const searchInput = document.querySelector('.search-input-row input');
         if (!searchInput) throw new Error('search input missing');
         if (window.innerWidth > 1020) throw new Error('reduced window test did not use the expected width');
@@ -311,7 +350,7 @@ app
         }
         const viewButtons = document.querySelectorAll('.nav-view-button');
         if (viewButtons.length !== 2) throw new Error('document view buttons missing');
-        if (expectedAppVersion !== '0.1.15') throw new Error('unexpected application version');
+        if (expectedAppVersion !== '0.1.16') throw new Error('unexpected application version');
         const initialExpandedState = JSON.parse(window.localStorage.getItem('textotheque:expanded-folders:v2') ?? '[]');
         if (initialExpandedState.length !== 0) throw new Error('folders should be closed by default');
         await waitFor(() => window.localStorage.getItem('textotheque:pane-layout:v2'), 'pane layout stored');
@@ -818,6 +857,33 @@ app
 
     if (!result.ok) {
       throw new Error(`UI safeguards check failed: ${result.errorStack ?? 'unknown error'}`);
+    }
+    if (libraryBackupInvocations !== 2) {
+      throw new Error(`Library backup cancellation and success should invoke IPC twice, got ${libraryBackupInvocations}.`);
+    }
+
+    forceFailures('library:backup');
+    const backupFailureResult = await window.webContents.executeJavaScript(`
+      (async () => {
+        document.querySelector('.library-backup-button').click();
+        const start = Date.now();
+        while (Date.now() - start < 3000) {
+          const message = document.querySelector('.error-message')?.textContent ?? '';
+          if (message.includes('Impossible de créer la sauvegarde de la bibliothèque.')) {
+            return {
+              ok: !document.querySelector('.success-message') &&
+                !message.includes('SQLITE_FORCED') &&
+                !message.includes('C:\\private'),
+              message,
+            };
+          }
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        }
+        return { ok: false, message: 'library backup error feedback missing' };
+      })()
+    `);
+    if (!backupFailureResult.ok) {
+      throw new Error(`Library backup failure feedback check failed: ${backupFailureResult.message}`);
     }
 
     await new Promise((resolve) => {

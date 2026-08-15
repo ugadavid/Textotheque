@@ -4,6 +4,14 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 app
   .whenReady()
   .then(async () => {
+    ipcMain.handle('library:get-info', () => ({
+      path: 'C:\\temporary\\textotheque.sqlite',
+      fileName: 'textotheque.sqlite',
+      applicationId: 1413830735,
+      userVersion: 2,
+      isTextotheque: true,
+    }));
+    ipcMain.handle('library:backup', () => ({ canceled: true, path: null, fileName: null, error: null }));
     ipcMain.handle('documents:list', () => []);
     ipcMain.handle('documents:list-deleted', () => []);
     ipcMain.handle('documents:create', (_event, folderId = null) => ({
@@ -63,6 +71,8 @@ app
       (async () => {
         const api = window.textotheque;
         if (!api) return { ok: false, reason: 'window.textotheque missing' };
+        if (typeof api.getLibraryInfo !== 'function') return { ok: false, reason: 'getLibraryInfo missing' };
+        if (typeof api.backupLibrary !== 'function') return { ok: false, reason: 'backupLibrary missing' };
         if (typeof api.listDocuments !== 'function') return { ok: false, reason: 'listDocuments missing' };
         if (typeof api.listDeletedDocuments !== 'function') return { ok: false, reason: 'listDeletedDocuments missing' };
         if (typeof api.createDocument !== 'function') return { ok: false, reason: 'createDocument missing' };
@@ -78,6 +88,8 @@ app
           unhandledRejections.push(String(event.reason));
         });
         const documents = await api.listDocuments();
+        const libraryInfo = await api.getLibraryInfo();
+        const canceledBackup = await api.backupLibrary();
         const deletedDocuments = await api.listDeletedDocuments();
         const folders = await api.listFolders();
         const createdFolder = await api.createFolder(null);
@@ -95,6 +107,11 @@ app
         await new Promise((resolve) => setTimeout(resolve, 0));
         return {
           ok: Array.isArray(documents) &&
+            libraryInfo.fileName === 'textotheque.sqlite' &&
+            libraryInfo.applicationId === 1413830735 &&
+            libraryInfo.userVersion === 2 &&
+            canceledBackup.canceled === true &&
+            canceledBackup.path === null &&
             Array.isArray(deletedDocuments) &&
             Array.isArray(folders) &&
             created &&

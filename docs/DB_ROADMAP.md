@@ -109,6 +109,17 @@ application_id = identifiant stable Textothèque
 
 L’identifiant numérique exact doit être choisi une fois, documenté et ne plus changer ensuite.
 
+Décision définitive depuis la version `0.1.16` :
+
+```text
+TEXTOTHEQUE_APPLICATION_ID
+hex       : 0x5445584F
+decimal   : 1413830735
+mnemonic  : TEXO
+```
+
+Cet identifiant est stable et indépendant de la version de l'application comme de `PRAGMA user_version`.
+
 Une alternative légère n’est acceptable que si elle apporte un avantage réel.
 
 Ne pas ajouter une table de métadonnées complexe uniquement pour stocker le nom du produit.
@@ -938,7 +949,7 @@ Certaines décisions doivent rester ouvertes jusqu’à l’implémentation.
 
 ## application_id exact
 
-Choisir une valeur stable et documentée.
+Décidé en `0.1.16` : `0x5445584F` (`1413830735`, `TEXO`). Cette valeur ne doit plus changer.
 
 ## Extension
 

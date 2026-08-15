@@ -25,9 +25,12 @@ import {
   trashDocument,
 } from './services/documents';
 import { getErrorMessage, logRendererError } from './services/errors';
+import { backupLibrary, getLibraryInfo } from './services/library';
 import type { DocumentStatus, Folder, TextDocument } from './types/document';
+import type { LibraryInfo } from './types/library';
 
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
+type LibraryBackupState = 'idle' | 'saving' | 'success';
 type ResizeTarget = 'left' | 'right';
 type DocumentView = 'navigation' | 'all' | 'unfiled' | 'folder' | 'trash';
 
@@ -116,6 +119,9 @@ export default function App() {
   const [folderId, setFolderId] = useState<number | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [libraryInfo, setLibraryInfo] = useState<LibraryInfo | null>(null);
+  const [libraryBackupState, setLibraryBackupState] = useState<LibraryBackupState>('idle');
+  const [libraryNotice, setLibraryNotice] = useState<string | null>(null);
   const [paneLayout, setPaneLayout] = useState<PaneLayout>(() => loadPaneLayout());
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -127,6 +133,11 @@ export default function App() {
     void refreshDocuments().catch((loadError: unknown) => {
       showOperationError('initial-load', loadError, 'Impossible de charger les documents et les dossiers.');
     });
+    void getLibraryInfo()
+      .then(setLibraryInfo)
+      .catch((loadError: unknown) => {
+        showOperationError('load-library-info', loadError, 'Impossible de lire les informations de la bibliothèque.');
+      });
   }, []);
 
   const characterCount = content.length;
@@ -579,6 +590,29 @@ export default function App() {
     }
   }
 
+  async function handleBackupLibrary() {
+    setError(null);
+    setLibraryNotice(null);
+    setLibraryBackupState('saving');
+    try {
+      const result = await backupLibrary();
+      if (result.canceled) {
+        setLibraryBackupState('idle');
+        return;
+      }
+      if (result.error === 'same-source') {
+        setLibraryBackupState('idle');
+        setError('La sauvegarde doit utiliser un fichier différent de la bibliothèque courante.');
+        return;
+      }
+      setLibraryBackupState('success');
+      setLibraryNotice(`Sauvegarde créée : ${result.fileName ?? 'copie SQLite'}.`);
+    } catch (backupError: unknown) {
+      setLibraryBackupState('idle');
+      showOperationError('backup-library', backupError, 'Impossible de créer la sauvegarde de la bibliothèque.');
+    }
+  }
+
   async function handleTrashCurrentDocument() {
     if (!selectedDocument || selectedDocumentIsDeleted) {
       return;
@@ -844,6 +878,7 @@ export default function App() {
           saveState={displayedSaveState}
           isDirty={isDirty}
           error={error}
+          notice={libraryNotice}
           isDeleted={selectedDocumentIsDeleted}
           searchQuery={searchQuery}
           onTitleChange={(value) => {
@@ -858,6 +893,8 @@ export default function App() {
           metadataVisible={paneLayout.rightVisible}
           onToggleNavigation={toggleNavigationPane}
           onToggleMetadata={toggleMetadataPane}
+          libraryBackupState={libraryBackupState}
+          onBackupLibrary={handleBackupLibrary}
           onSearchChange={handleSearchChange}
           onClearSearch={clearSearchAndReturnToNavigation}
           onSave={handleSave}
@@ -911,6 +948,7 @@ export default function App() {
         characterCount={characterCount}
         wordCount={wordCount}
         version={__APP_VERSION__}
+        libraryInfo={libraryInfo}
       />
       {confirmDialog ? (
         <div className="confirm-backdrop" role="presentation">

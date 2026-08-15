@@ -75,6 +75,10 @@ function getUserVersion(db) {
   return db.pragma('user_version', { simple: true });
 }
 
+function getApplicationId(db) {
+  return db.pragma('application_id', { simple: true });
+}
+
 function insertLegacyDocument(db, title, content) {
   db.prepare(
     `INSERT INTO documents
@@ -89,9 +93,10 @@ function insertLegacyDocument(db, title, content) {
   });
 }
 
-function inspectCurrentSchema(dbPath, expectedVersion) {
+function inspectCurrentSchema(dbPath, expectedVersion, expectedApplicationId) {
   const schema = withDatabase(new Database(dbPath, { readonly: true }), (inspectDb) => ({
     version: getUserVersion(inspectDb),
+    applicationId: getApplicationId(inspectDb),
     documentColumns: new Set(inspectDb.pragma('table_info(documents)').map((column) => column.name)),
     folderColumns: new Set(inspectDb.pragma('table_info(folders)').map((column) => column.name)),
     documentIndexes: new Set(inspectDb.pragma('index_list(documents)').map((index) => index.name)),
@@ -99,6 +104,10 @@ function inspectCurrentSchema(dbPath, expectedVersion) {
   }));
 
   assert(schema.version === expectedVersion, `La version finale attendue est ${expectedVersion}, pas ${schema.version}.`);
+  assert(
+    schema.applicationId === expectedApplicationId,
+    `L application_id final attendu est ${expectedApplicationId}, pas ${schema.applicationId}.`
+  );
   for (const column of ['deleted_at', 'folder_id']) {
     assert(schema.documentColumns.has(column), `La colonne documents.${column} est absente.`);
   }
@@ -145,7 +154,7 @@ function exerciseMigratedDocument(db, title, expectedContent) {
   assert(db.listFolders().some((candidate) => candidate.id === folder.id), 'Le dossier cree est absent de la liste.');
 }
 
-function testFreshDatabase(createTextothequeDatabase, currentVersion) {
+function testFreshDatabase(createTextothequeDatabase, currentVersion, applicationId) {
   const dbPath = temporaryDatabasePath('fresh-schema');
   withDatabase(createTextothequeDatabase(dbPath), (db) => {
     const created = db.createDocument();
@@ -159,44 +168,47 @@ function testFreshDatabase(createTextothequeDatabase, currentVersion) {
     });
     assert(saved.content === 'Creation directe au schema courant.', 'La base neuve ne permet pas une sauvegarde normale.');
   });
-  inspectCurrentSchema(dbPath, currentVersion);
+  inspectCurrentSchema(dbPath, currentVersion, applicationId);
 }
 
-function testPreTrashLegacyDatabase(createTextothequeDatabase, currentVersion) {
+function testPreTrashLegacyDatabase(createTextothequeDatabase, currentVersion, applicationId) {
   const dbPath = temporaryDatabasePath('legacy-v0');
   withDatabase(new Database(dbPath), (fixtureDb) => {
     fixtureDb.exec(legacyDocumentsSchema);
     insertLegacyDocument(fixtureDb, 'Document legacy v0', 'Contenu conserve depuis une base sans deleted_at.');
     assert(getUserVersion(fixtureDb) === 0, 'La fixture legacy v0 doit commencer a user_version 0.');
+    assert(getApplicationId(fixtureDb) === 0, 'La fixture legacy v0 doit commencer sans application_id.');
   });
 
   withDatabase(createTextothequeDatabase(dbPath), (db) => {
     exerciseMigratedDocument(db, 'Document legacy v0', 'Contenu conserve depuis une base sans deleted_at.');
   });
-  inspectCurrentSchema(dbPath, currentVersion);
+  inspectCurrentSchema(dbPath, currentVersion, applicationId);
 }
 
-function testTrashOnlyDatabase(createTextothequeDatabase, currentVersion) {
+function testTrashOnlyDatabase(createTextothequeDatabase, currentVersion, applicationId) {
   const dbPath = temporaryDatabasePath('legacy-v1');
   withDatabase(new Database(dbPath), (fixtureDb) => {
     fixtureDb.exec(legacyDocumentsSchema);
     fixtureDb.exec('ALTER TABLE documents ADD COLUMN deleted_at TEXT');
     insertLegacyDocument(fixtureDb, 'Document legacy v1', 'Contenu conserve depuis une base avec corbeille.');
     assert(getUserVersion(fixtureDb) === 0, 'La fixture historique avec corbeille doit commencer sans version explicite.');
+    assert(getApplicationId(fixtureDb) === 0, 'La fixture historique avec corbeille doit commencer sans application_id.');
   });
 
   withDatabase(createTextothequeDatabase(dbPath), (db) => {
     exerciseMigratedDocument(db, 'Document legacy v1', 'Contenu conserve depuis une base avec corbeille.');
   });
-  inspectCurrentSchema(dbPath, currentVersion);
+  inspectCurrentSchema(dbPath, currentVersion, applicationId);
 }
 
-function testUnversionedCurrentDatabase(createTextothequeDatabase, currentVersion) {
+function testUnversionedCurrentDatabase(createTextothequeDatabase, currentVersion, applicationId) {
   const dbPath = temporaryDatabasePath('unversioned-current');
   const schemaVersionBeforeAdoption = withDatabase(new Database(dbPath), (fixtureDb) => {
     fixtureDb.exec(currentSchemaFixture);
     insertLegacyDocument(fixtureDb, 'Document structure actuelle', 'Contenu deja au schema courant.');
     assert(getUserVersion(fixtureDb) === 0, 'La base actuelle historique doit commencer sans version explicite.');
+    assert(getApplicationId(fixtureDb) === 0, 'La base actuelle historique doit commencer sans application_id.');
     return fixtureDb.pragma('schema_version', { simple: true });
   });
 
@@ -213,7 +225,7 @@ function testUnversionedCurrentDatabase(createTextothequeDatabase, currentVersio
     schemaVersionAfterAdoption === schemaVersionBeforeAdoption,
     'L adoption de la structure actuelle ne doit pas rejouer de DDL.'
   );
-  inspectCurrentSchema(dbPath, currentVersion);
+  inspectCurrentSchema(dbPath, currentVersion, applicationId);
 
   withDatabase(createTextothequeDatabase(dbPath), () => undefined);
   const schemaVersionAfterReopen = withDatabase(
@@ -228,13 +240,14 @@ app
   .then(async () => {
     let successMessage;
     try {
-      const { createTextothequeDatabase, CURRENT_SCHEMA_VERSION } = await import('../dist-electron/database.js');
+      const { createTextothequeDatabase, CURRENT_SCHEMA_VERSION, TEXTOTHEQUE_APPLICATION_ID } = await import('../dist-electron/database.js');
 
       assert(CURRENT_SCHEMA_VERSION === 2, 'Le test legacy doit etre synchronise avec le schema courant v2.');
-      testFreshDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION);
-      testPreTrashLegacyDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION);
-      testTrashOnlyDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION);
-      testUnversionedCurrentDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION);
+      assert(TEXTOTHEQUE_APPLICATION_ID === 1413830735, 'L application_id Textotheque definitif a change.');
+      testFreshDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION, TEXTOTHEQUE_APPLICATION_ID);
+      testPreTrashLegacyDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION, TEXTOTHEQUE_APPLICATION_ID);
+      testTrashOnlyDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION, TEXTOTHEQUE_APPLICATION_ID);
+      testUnversionedCurrentDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION, TEXTOTHEQUE_APPLICATION_ID);
       successMessage = `legacy migrations ok: schema ${CURRENT_SCHEMA_VERSION}, 4 scenarios`;
     } finally {
       removeTestTempDirectory(tempDirectory);

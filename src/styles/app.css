@@ -716,8 +716,13 @@ h2 {
 
 .save-controls {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 10px;
+}
+
+.library-backup-button {
+  white-space: nowrap;
 }
 
 .trash-button {
@@ -784,6 +789,12 @@ h2 {
 .error-message {
   margin: 12px 0 0;
   color: #a23131;
+  font-weight: 700;
+}
+
+.success-message {
+  margin: 12px 0 0;
+  color: #2f675c;
   font-weight: 700;
 }
 

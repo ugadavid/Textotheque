@@ -39,6 +39,34 @@ export interface DocumentInput {
 }
 
 export const CURRENT_SCHEMA_VERSION = 2;
+export const TEXTOTHEQUE_APPLICATION_ID = 0x5445584f;
+
+export type LibraryCompatibility = 'compatible' | 'legacy-textotheque' | 'too-new' | 'foreign' | 'invalid';
+
+export interface LibraryInfo {
+  path: string;
+  fileName: string;
+  applicationId: number;
+  userVersion: number;
+  isTextotheque: boolean;
+}
+
+export interface LibraryInspection {
+  path: string;
+  fileName: string;
+  readable: boolean;
+  applicationId: number | null;
+  userVersion: number | null;
+  isTextotheque: boolean;
+  compatibility: LibraryCompatibility;
+}
+
+export interface LibraryBackupResult {
+  canceled: boolean;
+  path: string | null;
+  fileName: string | null;
+  error: 'same-source' | null;
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -89,6 +117,133 @@ function columnExists(db: Database.Database, tableName: string, columnName: stri
   return columns.some((column) => column.name === columnName);
 }
 
+const legacyDocumentColumns = [
+  'id',
+  'title',
+  'content',
+  'content_format',
+  'status',
+  'favorite',
+  'created_at',
+  'updated_at',
+  'last_opened_at',
+  'notes',
+];
+const currentFolderColumns = ['id', 'name', 'parent_id', 'position', 'created_at', 'updated_at'];
+
+function hasExactColumns(db: Database.Database, tableName: string, expectedColumns: string[]): boolean {
+  if (!tableExists(db, tableName)) {
+    return false;
+  }
+
+  const actualColumns = (db.pragma(`table_info(${tableName})`) as Array<{ name: string }>).map(
+    (column) => column.name
+  );
+  return (
+    actualColumns.length === expectedColumns.length &&
+    expectedColumns.every((columnName) => actualColumns.includes(columnName))
+  );
+}
+
+function hasOnlyHistoricalTables(db: Database.Database, expectedTables: string[]): boolean {
+  const tables = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
+    .all() as Array<{ name: string }>;
+  return (
+    tables.length === expectedTables.length &&
+    expectedTables.every((tableName) => tables.some((table) => table.name === tableName))
+  );
+}
+
+function inferKnownTextothequeSchemaVersion(db: Database.Database): number | null {
+  const documentColumnsV0 = legacyDocumentColumns;
+  const documentColumnsV1 = [...legacyDocumentColumns, 'deleted_at'];
+  const documentColumnsV2 = [...legacyDocumentColumns, 'deleted_at', 'folder_id'];
+
+  if (
+    hasOnlyHistoricalTables(db, ['documents', 'folders']) &&
+    hasExactColumns(db, 'documents', documentColumnsV2) &&
+    hasExactColumns(db, 'folders', currentFolderColumns)
+  ) {
+    return 2;
+  }
+  if (hasOnlyHistoricalTables(db, ['documents']) && hasExactColumns(db, 'documents', documentColumnsV1)) {
+    return 1;
+  }
+  if (hasOnlyHistoricalTables(db, ['documents']) && hasExactColumns(db, 'documents', documentColumnsV0)) {
+    return 0;
+  }
+  return null;
+}
+
+function isKnownSchemaForDeclaredVersion(db: Database.Database, declaredVersion: number): boolean {
+  const inferredVersion = inferKnownTextothequeSchemaVersion(db);
+  return declaredVersion === 0 ? inferredVersion !== null : inferredVersion === declaredVersion;
+}
+
+function getApplicationId(db: Database.Database): number {
+  return db.pragma('application_id', { simple: true }) as number;
+}
+
+function getUserVersion(db: Database.Database): number {
+  return db.pragma('user_version', { simple: true }) as number;
+}
+
+function inspectOpenDatabase(db: Database.Database, dbPath: string): LibraryInspection {
+  const applicationId = getApplicationId(db);
+  const userVersion = getUserVersion(db);
+  const base = {
+    path: path.resolve(dbPath),
+    fileName: path.basename(dbPath),
+    readable: true,
+    applicationId,
+    userVersion,
+  };
+
+  if (applicationId !== 0 && applicationId !== TEXTOTHEQUE_APPLICATION_ID) {
+    return { ...base, isTextotheque: false, compatibility: 'foreign' };
+  }
+  if (applicationId === TEXTOTHEQUE_APPLICATION_ID) {
+    if (userVersion > CURRENT_SCHEMA_VERSION) {
+      return { ...base, isTextotheque: true, compatibility: 'too-new' };
+    }
+    if (!isKnownSchemaForDeclaredVersion(db, userVersion)) {
+      return { ...base, isTextotheque: true, compatibility: 'invalid' };
+    }
+    return {
+      ...base,
+      isTextotheque: true,
+      compatibility: userVersion === CURRENT_SCHEMA_VERSION ? 'compatible' : 'legacy-textotheque',
+    };
+  }
+
+  if (userVersion <= CURRENT_SCHEMA_VERSION && isKnownSchemaForDeclaredVersion(db, userVersion)) {
+    return { ...base, isTextotheque: true, compatibility: 'legacy-textotheque' };
+  }
+  return { ...base, isTextotheque: false, compatibility: 'foreign' };
+}
+
+export function inspectTextothequeLibrary(dbPath: string): LibraryInspection {
+  const resolvedPath = path.resolve(dbPath);
+  let inspectionDb: Database.Database | null = null;
+  try {
+    inspectionDb = new Database(resolvedPath, { readonly: true, fileMustExist: true });
+    return inspectOpenDatabase(inspectionDb, resolvedPath);
+  } catch {
+    return {
+      path: resolvedPath,
+      fileName: path.basename(resolvedPath),
+      readable: false,
+      applicationId: null,
+      userVersion: null,
+      isTextotheque: false,
+      compatibility: 'invalid',
+    };
+  } finally {
+    inspectionDb?.close();
+  }
+}
+
 const schemaMigrations: SchemaMigration[] = [
   {
     version: 1,
@@ -123,28 +278,62 @@ const schemaMigrations: SchemaMigration[] = [
 
 export class TextothequeDatabase {
   private db: Database.Database;
+  private readonly dbPath: string;
 
   constructor(dbPath: string) {
-    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
-    this.db.pragma('journal_mode = WAL');
-    this.initializeSchema();
-    this.createIndexes();
-    this.cleanupEmptyDraftDocuments();
+    this.dbPath = path.resolve(dbPath);
+    const databaseAlreadyExisted = fs.existsSync(this.dbPath);
+    fs.mkdirSync(path.dirname(this.dbPath), { recursive: true });
+    this.db = new Database(this.dbPath);
+
+    try {
+      this.assertAdoptableIdentity(databaseAlreadyExisted);
+      this.db.pragma('journal_mode = WAL');
+      this.initializeSchema(databaseAlreadyExisted);
+      this.createIndexes();
+      this.cleanupEmptyDraftDocuments();
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
   }
 
-  private initializeSchema(): void {
+  private assertAdoptableIdentity(databaseAlreadyExisted: boolean): void {
+    const applicationId = getApplicationId(this.db);
     const declaredVersion = this.getSchemaVersion();
+
+    if (applicationId !== 0 && applicationId !== TEXTOTHEQUE_APPLICATION_ID) {
+      throw new Error(`Cette base SQLite n'est pas une bibliothèque Textothèque.`);
+    }
     if (declaredVersion > CURRENT_SCHEMA_VERSION) {
       throw new Error(
         `La base utilise le schema ${declaredVersion}, plus recent que le schema ${CURRENT_SCHEMA_VERSION} pris en charge.`
       );
     }
+    if (
+      databaseAlreadyExisted &&
+      applicationId === 0 &&
+      !isKnownSchemaForDeclaredVersion(this.db, declaredVersion)
+    ) {
+      throw new Error(`Cette base SQLite non signée ne correspond pas à un schéma historique Textothèque connu.`);
+    }
+    if (
+      databaseAlreadyExisted &&
+      applicationId === TEXTOTHEQUE_APPLICATION_ID &&
+      !isKnownSchemaForDeclaredVersion(this.db, declaredVersion)
+    ) {
+      throw new Error(`Cette bibliothèque Textothèque déclare un schéma incohérent.`);
+    }
+  }
 
-    if (!tableExists(this.db, 'documents')) {
+  private initializeSchema(databaseAlreadyExisted: boolean): void {
+    const declaredVersion = this.getSchemaVersion();
+
+    if (!databaseAlreadyExisted) {
       const createLatestSchema = this.db.transaction(() => {
         this.db.exec(currentSchema);
         this.setSchemaVersion(CURRENT_SCHEMA_VERSION);
+        this.setApplicationId(TEXTOTHEQUE_APPLICATION_ID);
       });
       createLatestSchema();
       this.validateCurrentSchema();
@@ -158,6 +347,9 @@ export class TextothequeDatabase {
     this.validateSchemaVersion(this.getSchemaVersion());
     this.runMigrations();
     this.validateCurrentSchema();
+    if (getApplicationId(this.db) === 0) {
+      this.setApplicationId(TEXTOTHEQUE_APPLICATION_ID);
+    }
   }
 
   private getSchemaVersion(): number {
@@ -166,6 +358,10 @@ export class TextothequeDatabase {
 
   private setSchemaVersion(version: number): void {
     this.db.pragma(`user_version = ${version}`);
+  }
+
+  private setApplicationId(applicationId: number): void {
+    this.db.pragma(`application_id = ${applicationId}`);
   }
 
   private inferUnversionedSchemaVersion(): number {
@@ -463,6 +659,43 @@ export class TextothequeDatabase {
   emptyTrash(): number {
     const result = this.db.prepare(`DELETE FROM documents WHERE deleted_at IS NOT NULL`).run();
     return result.changes;
+  }
+
+  getLibraryInfo(): LibraryInfo {
+    return {
+      path: this.dbPath,
+      fileName: path.basename(this.dbPath),
+      applicationId: getApplicationId(this.db),
+      userVersion: this.getSchemaVersion(),
+      isTextotheque: getApplicationId(this.db) === TEXTOTHEQUE_APPLICATION_ID,
+    };
+  }
+
+  async backupTo(destinationPath: string): Promise<LibraryInspection> {
+    const resolvedDestination = path.resolve(destinationPath);
+    if (this.isCurrentLibraryPath(resolvedDestination)) {
+      throw new Error('La destination de sauvegarde doit être différente de la bibliothèque courante.');
+    }
+
+    await this.db.backup(resolvedDestination);
+    const inspection = inspectTextothequeLibrary(resolvedDestination);
+    if (
+      inspection.compatibility !== 'compatible' ||
+      inspection.applicationId !== TEXTOTHEQUE_APPLICATION_ID ||
+      inspection.userVersion !== CURRENT_SCHEMA_VERSION
+    ) {
+      throw new Error("La copie créée n'a pas pu être vérifiée comme bibliothèque Textothèque compatible.");
+    }
+    return inspection;
+  }
+
+  isCurrentLibraryPath(candidatePath: string): boolean {
+    const comparablePath = (candidatePath: string) => {
+      const resolvedPath = path.resolve(candidatePath);
+      const canonicalPath = fs.existsSync(resolvedPath) ? fs.realpathSync.native(resolvedPath) : resolvedPath;
+      return process.platform === 'win32' ? canonicalPath.toLocaleLowerCase('en-US') : canonicalPath;
+    };
+    return comparablePath(this.dbPath) === comparablePath(candidatePath);
   }
 
   close(): void {

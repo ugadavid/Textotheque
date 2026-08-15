@@ -1,7 +1,7 @@
 {
   "name": "textotheque",
   "productName": "Textotheque",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.js",
@@ -18,7 +18,8 @@
     "test:app-identity": "npm run build && node scripts/electron-app-identity-check.cjs",
     "test:ipc-error": "npm run build && node scripts/electron-ipc-error-check.cjs",
     "test:electron-sqlite": "electron scripts/electron-sqlite-smoke.cjs",
-    "test:legacy-migration": "tsc -p electron/tsconfig.json && electron scripts/electron-legacy-migration-check.cjs"
+    "test:legacy-migration": "tsc -p electron/tsconfig.json && electron scripts/electron-legacy-migration-check.cjs",
+    "test:library": "tsc -p electron/tsconfig.json && electron scripts/electron-library-check.cjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",

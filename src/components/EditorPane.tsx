@@ -7,16 +7,19 @@ interface EditorPaneProps {
   saveState: 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
   isDirty: boolean;
   error: string | null;
+  notice: string | null;
   isDeleted: boolean;
   searchQuery: string;
   navigationVisible: boolean;
   metadataVisible: boolean;
+  libraryBackupState: 'idle' | 'saving' | 'success';
   onTitleChange: (value: string) => void;
   onContentChange: (value: string) => void;
   onSearchChange: (value: string) => void;
   onClearSearch: () => void;
   onToggleNavigation: () => void;
   onToggleMetadata: () => void;
+  onBackupLibrary: () => void;
   onSave: () => void;
   onTrash: () => void;
   onRestore: () => void;
@@ -37,16 +40,19 @@ export default function EditorPane({
   saveState,
   isDirty,
   error,
+  notice,
   isDeleted,
   searchQuery,
   navigationVisible,
   metadataVisible,
+  libraryBackupState,
   onTitleChange,
   onContentChange,
   onSearchChange,
   onClearSearch,
   onToggleNavigation,
   onToggleMetadata,
+  onBackupLibrary,
   onSave,
   onTrash,
   onRestore,
@@ -90,29 +96,41 @@ export default function EditorPane({
           />
           {searchQuery.trim() ? <button className="clear-search-button" type="button" onClick={onClearSearch} title="Vider la recherche" aria-label="Vider la recherche">×</button> : null}
         </div>
-        {document ? <div className="save-controls">
-          <span className={`save-state ${saveState}`}>{saveLabels[saveState]}</span>
-          {isDeleted ? (
-            <button className="primary-button" type="button" onClick={onRestore}>
-              Restaurer
-            </button>
-          ) : (
-            <>
-              <button className="secondary-button trash-button" type="button" onClick={onTrash}>
-                Corbeille
+        <div className="save-controls">
+          <button
+            className="secondary-button library-backup-button"
+            type="button"
+            onClick={onBackupLibrary}
+            disabled={libraryBackupState === 'saving'}
+            title="Sauvegarder une copie complète de la bibliothèque"
+            aria-label="Sauvegarder une copie de la bibliothèque"
+          >
+            {libraryBackupState === 'saving' ? 'Copie…' : 'Copie bibliothèque…'}
+          </button>
+          {document ? <>
+            <span className={`save-state ${saveState}`}>{saveLabels[saveState]}</span>
+            {isDeleted ? (
+              <button className="primary-button" type="button" onClick={onRestore}>
+                Restaurer
               </button>
-              <button
-                className="primary-button"
-                type="button"
-                onClick={onSave}
-                disabled={saveState === 'saving'}
-                title="Sauvegarder - Ctrl+S"
-              >
-                Sauvegarder
-              </button>
-            </>
-          )}
-        </div> : <div className="save-controls toolbar-empty-actions" />}
+            ) : (
+              <>
+                <button className="secondary-button trash-button" type="button" onClick={onTrash}>
+                  Corbeille
+                </button>
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={onSave}
+                  disabled={saveState === 'saving'}
+                  title="Sauvegarder - Ctrl+S"
+                >
+                  Sauvegarder
+                </button>
+              </>
+            )}
+          </> : null}
+        </div>
         <button
           className={metadataVisible ? 'pane-toggle-button toggle-metadata-button active' : 'pane-toggle-button toggle-metadata-button'}
           type="button"
@@ -126,6 +144,7 @@ export default function EditorPane({
       </header>
 
       {error ? <p className="error-message">{error}</p> : null}
+      {notice ? <p className="success-message" role="status">{notice}</p> : null}
       {document ? <textarea
           className="content-editor"
           value={content}

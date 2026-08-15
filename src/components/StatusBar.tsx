@@ -1,4 +1,5 @@
 import type { DocumentStatus, TextDocument } from '../types/document';
+import type { LibraryInfo } from '../types/library';
 
 type DocumentView = 'navigation' | 'all' | 'unfiled' | 'folder' | 'trash';
 
@@ -15,6 +16,7 @@ interface StatusBarProps {
   characterCount: number;
   wordCount: number;
   version: string;
+  libraryInfo: LibraryInfo | null;
 }
 
 const saveLabels = {
@@ -38,6 +40,7 @@ export default function StatusBar({
   characterCount,
   wordCount,
   version,
+  libraryInfo,
 }: StatusBarProps) {
   const trimmedSearch = searchQuery.trim();
 
@@ -56,6 +59,7 @@ export default function StatusBar({
       <span>{wordCount} mots</span>
       <span>{characterCount} caracteres</span>
       <span>SQLite OK</span>
+      {libraryInfo ? <span className="library-name" title={libraryInfo.path}>Bibliothèque : {libraryInfo.fileName}</span> : null}
       <span>v{version}</span>
     </footer>
   );
