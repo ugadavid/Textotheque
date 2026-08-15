@@ -40,6 +40,11 @@ export interface DocumentInput {
 
 export const CURRENT_SCHEMA_VERSION = 2;
 
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+// Application writes timestamps explicitly through nowIso(); SQL defaults are fallback only.
 const currentSchema = `
 CREATE TABLE IF NOT EXISTS documents (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -256,7 +261,7 @@ export class TextothequeDatabase {
   }
 
   cleanupEmptyDraftDocuments(): number {
-    const now = new Date().toISOString();
+    const now = nowIso();
     const result = this.db
       .prepare(
         `UPDATE documents
@@ -311,7 +316,7 @@ export class TextothequeDatabase {
 
   createDocument(folderId: number | null = null): TextDocument {
     this.assertFolderExists(folderId, 'Impossible de creer le document');
-    const now = new Date().toISOString();
+    const now = nowIso();
     const result = this.db
       .prepare(
         `INSERT INTO documents (title, content, content_format, status, favorite, folder_id, created_at, updated_at, last_opened_at, notes)
@@ -329,7 +334,7 @@ export class TextothequeDatabase {
   updateDocument(id: number, input: DocumentInput): TextDocument {
     const folderId = input.folder_id ?? null;
     this.assertFolderExists(folderId, 'Impossible de mettre a jour le document');
-    const now = new Date().toISOString();
+    const now = nowIso();
     this.db
       .prepare(
         `UPDATE documents
@@ -373,7 +378,7 @@ export class TextothequeDatabase {
 
   createFolder(parentId: number | null = null): Folder {
     this.assertFolderExists(parentId, 'Impossible de creer le sous-dossier');
-    const now = new Date().toISOString();
+    const now = nowIso();
     const position = this.db
       .prepare(
         `SELECT COALESCE(MAX(position), 0) + 1 AS next_position
@@ -398,7 +403,7 @@ export class TextothequeDatabase {
   }
 
   renameFolder(id: number, name: string): Folder {
-    const now = new Date().toISOString();
+    const now = nowIso();
     const normalizedName = name.trim() || 'Nouveau dossier';
     this.db
       .prepare(
@@ -419,7 +424,7 @@ export class TextothequeDatabase {
   }
 
   markOpened(id: number): TextDocument {
-    const now = new Date().toISOString();
+    const now = nowIso();
     this.db.prepare(`UPDATE documents SET last_opened_at = @now WHERE id = @id`).run({ id, now });
 
     const document = this.getDocument(id);
@@ -430,7 +435,7 @@ export class TextothequeDatabase {
   }
 
   trashDocument(id: number): TextDocument {
-    const now = new Date().toISOString();
+    const now = nowIso();
     this.db
       .prepare(`UPDATE documents SET deleted_at = @now, updated_at = @now WHERE id = @id AND deleted_at IS NULL`)
       .run({ id, now });
@@ -443,7 +448,7 @@ export class TextothequeDatabase {
   }
 
   restoreDocument(id: number): TextDocument {
-    const now = new Date().toISOString();
+    const now = nowIso();
     this.db
       .prepare(`UPDATE documents SET deleted_at = NULL, updated_at = @now WHERE id = @id AND deleted_at IS NOT NULL`)
       .run({ id, now });

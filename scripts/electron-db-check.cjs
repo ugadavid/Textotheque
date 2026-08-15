@@ -3,6 +3,17 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 const { app } = require('electron');
 
+function assertCanonicalIsoUtc(value, label) {
+  if (typeof value !== 'string') {
+    throw new Error(`${label} doit etre une chaine ISO UTC.`);
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime()) || value !== parsed.toISOString()) {
+    throw new Error(`${label} n utilise pas le format ISO UTC canonique: ${value}`);
+  }
+}
+
 app
   .whenReady()
   .then(async () => {
@@ -14,6 +25,8 @@ app
     if (created.title !== '') {
       throw new Error('Un nouveau document doit stocker un titre vide en base.');
     }
+    assertCanonicalIsoUtc(created.created_at, 'documents.created_at apres creation');
+    assertCanonicalIsoUtc(created.updated_at, 'documents.updated_at apres creation');
 
     const saved = db.updateDocument(created.id, {
       title: 'Verification SQLite',
@@ -22,7 +35,9 @@ app
       status: 'active',
       favorite: true,
     });
+    assertCanonicalIsoUtc(saved.updated_at, 'documents.updated_at apres sauvegarde');
     const reopened = db.markOpened(saved.id);
+    assertCanonicalIsoUtc(reopened.last_opened_at, 'documents.last_opened_at apres ouverture');
     const listed = db.listDocuments();
 
     if (!reopened || reopened.title !== 'Verification SQLite') {
@@ -37,6 +52,13 @@ app
     const childFolder = db.createFolder(rootFolder.id);
     const renamedRoot = db.renameFolder(rootFolder.id, 'Notes memoire');
     const fallbackFolderName = db.renameFolder(childFolder.id, '   ');
+
+    for (const folder of [rootFolder, childFolder]) {
+      assertCanonicalIsoUtc(folder.created_at, `folders.created_at apres creation du dossier ${folder.id}`);
+      assertCanonicalIsoUtc(folder.updated_at, `folders.updated_at apres creation du dossier ${folder.id}`);
+    }
+    assertCanonicalIsoUtc(renamedRoot.updated_at, 'folders.updated_at apres renommage');
+    assertCanonicalIsoUtc(fallbackFolderName.updated_at, 'folders.updated_at apres renommage vide');
 
     if (renamedRoot.name !== 'Notes memoire' || fallbackFolderName.name !== 'Nouveau dossier') {
       throw new Error('Le renommage de dossier ou le fallback de nom vide est incorrect.');
@@ -160,6 +182,8 @@ app
     if (!trashed.deleted_at) {
       throw new Error('La mise a la corbeille ne renseigne pas deleted_at.');
     }
+    assertCanonicalIsoUtc(trashed.deleted_at, 'documents.deleted_at apres mise a la corbeille');
+    assertCanonicalIsoUtc(trashed.updated_at, 'documents.updated_at apres mise a la corbeille');
 
     if (db.listDocuments().some((document) => document.id === saved.id)) {
       throw new Error('Un document mis a la corbeille apparait encore dans la liste active.');
@@ -174,6 +198,7 @@ app
     if (restored.deleted_at !== null || restored.content !== 'Document persistant en base SQLite.') {
       throw new Error('La restauration ne conserve pas correctement le document.');
     }
+    assertCanonicalIsoUtc(restored.updated_at, 'documents.updated_at apres restauration');
 
     if (!db.listDocuments().some((document) => document.id === saved.id)) {
       throw new Error('Un document restaure ne reapparait pas dans la liste active.');
@@ -257,7 +282,8 @@ app
 
     db = createTextothequeDatabase(dbPath);
     const afterCleanupIds = new Set(db.listDocuments().map((document) => document.id));
-    const afterCleanupDeletedIds = new Set(db.listDeletedDocuments().map((document) => document.id));
+    const afterCleanupDeleted = db.listDeletedDocuments();
+    const afterCleanupDeletedIds = new Set(afterCleanupDeleted.map((document) => document.id));
 
     if (afterCleanupIds.has(emptyDraft.id)) {
       throw new Error('Le brouillon vide nettoyable existe encore apres reouverture.');
@@ -266,6 +292,10 @@ app
     if (!afterCleanupDeletedIds.has(emptyDraft.id)) {
       throw new Error('Le brouillon vide nettoyable doit etre deplace en corbeille, pas detruit.');
     }
+
+    const cleanedDraft = afterCleanupDeleted.find((document) => document.id === emptyDraft.id);
+    assertCanonicalIsoUtc(cleanedDraft?.deleted_at, 'documents.deleted_at apres nettoyage de brouillon');
+    assertCanonicalIsoUtc(cleanedDraft?.updated_at, 'documents.updated_at apres nettoyage de brouillon');
 
     for (const protectedDocument of [withContent, withNotes, favoriteDraft, activeDraft]) {
       if (!afterCleanupIds.has(protectedDocument.id)) {
