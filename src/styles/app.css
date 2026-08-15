@@ -721,10 +721,6 @@ h2 {
   gap: 10px;
 }
 
-.library-backup-button,
-.library-open-button {
-  white-space: nowrap;
-}
 
 .trash-button {
   border-color: #8e3f28;

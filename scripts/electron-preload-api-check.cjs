@@ -12,6 +12,7 @@ app
       isTextotheque: true,
     }));
     ipcMain.handle('library:backup', () => ({ canceled: true, path: null, fileName: null, error: null }));
+    ipcMain.handle('library:get-startup-notice', () => 'fallback temporaire');
     ipcMain.handle('library:choose-open', () => ({
       status: 'compatible',
       inspection: { path: 'C:\\temporary\\other.sqlite', compatibility: 'compatible' },
@@ -23,6 +24,17 @@ app
       inspection: { path: candidatePath, compatibility: 'compatible' },
       library: { path: candidatePath, fileName: 'other.sqlite', applicationId: 1413830735, userVersion: 2, isTextotheque: true },
       backupPath: migrationApproved ? 'C:\\temporary\\pre-migration.sqlite' : null,
+    }));
+    ipcMain.handle('library:inspect', (_event, candidatePath) => ({
+      status: 'compatible', inspection: { path: candidatePath, compatibility: 'compatible' }, library: null, backupPath: null,
+    }));
+    ipcMain.handle('library:choose-create', (event) => {
+      event.sender.send('library:menu-action', { action: 'new' });
+      return { status: 'selected', path: 'C:\\temporary\\created.sqlite' };
+    });
+    ipcMain.handle('library:create', (_event, candidatePath) => ({
+      status: 'created',
+      library: { path: candidatePath, fileName: 'created.sqlite', applicationId: 1413830735, userVersion: 2, isTextotheque: true },
     }));
     ipcMain.handle('documents:list', () => []);
     ipcMain.handle('documents:list-deleted', () => []);
@@ -87,6 +99,10 @@ app
         if (typeof api.backupLibrary !== 'function') return { ok: false, reason: 'backupLibrary missing' };
         if (typeof api.chooseOpenLibrary !== 'function') return { ok: false, reason: 'chooseOpenLibrary missing' };
         if (typeof api.openLibrary !== 'function') return { ok: false, reason: 'openLibrary missing' };
+        if (typeof api.inspectLibrary !== 'function') return { ok: false, reason: 'inspectLibrary missing' };
+        if (typeof api.chooseCreateLibrary !== 'function') return { ok: false, reason: 'chooseCreateLibrary missing' };
+        if (typeof api.createLibrary !== 'function') return { ok: false, reason: 'createLibrary missing' };
+        if (typeof api.onLibraryMenuAction !== 'function') return { ok: false, reason: 'onLibraryMenuAction missing' };
         if (typeof api.listDocuments !== 'function') return { ok: false, reason: 'listDocuments missing' };
         if (typeof api.listDeletedDocuments !== 'function') return { ok: false, reason: 'listDeletedDocuments missing' };
         if (typeof api.createDocument !== 'function') return { ok: false, reason: 'createDocument missing' };
@@ -103,9 +119,17 @@ app
         });
         const documents = await api.listDocuments();
         const libraryInfo = await api.getLibraryInfo();
+        const startupNotice = await api.getLibraryStartupNotice();
         const canceledBackup = await api.backupLibrary();
         const chosenLibrary = await api.chooseOpenLibrary();
         const openedLibrary = await api.openLibrary(chosenLibrary.inspection.path, true);
+        const inspectedLibrary = await api.inspectLibrary('C:\\temporary\\known.sqlite');
+        let receivedMenuAction = null;
+        const unsubscribeMenu = api.onLibraryMenuAction((action) => { receivedMenuAction = action; });
+        const createSelection = await api.chooseCreateLibrary();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        unsubscribeMenu();
+        const createdLibrary = await api.createLibrary(createSelection.path);
         const deletedDocuments = await api.listDeletedDocuments();
         const folders = await api.listFolders();
         const createdFolder = await api.createFolder(null);
@@ -126,12 +150,17 @@ app
             libraryInfo.fileName === 'textotheque.sqlite' &&
             libraryInfo.applicationId === 1413830735 &&
             libraryInfo.userVersion === 2 &&
+            startupNotice === 'fallback temporaire' &&
             canceledBackup.canceled === true &&
             canceledBackup.path === null &&
             chosenLibrary.status === 'compatible' &&
             openedLibrary.status === 'opened' &&
             openedLibrary.library.fileName === 'other.sqlite' &&
             openedLibrary.backupPath.endsWith('pre-migration.sqlite') &&
+            inspectedLibrary.status === 'compatible' &&
+            receivedMenuAction?.action === 'new' &&
+            createdLibrary.status === 'created' &&
+            createdLibrary.library.fileName === 'created.sqlite' &&
             Array.isArray(deletedDocuments) &&
             Array.isArray(folders) &&
             created &&

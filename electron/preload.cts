@@ -1,14 +1,23 @@
 import type { DocumentInput, Folder, LibraryBackupResult, LibraryInfo, TextDocument } from './database.js';
-import type { LibraryOpenResult } from './library-manager.js';
+import type { LibraryCreateResult, LibraryCreateSelection, LibraryMenuAction, LibraryOpenResult } from './library-manager.js';
 
 const { contextBridge, ipcRenderer } = require('electron') as typeof import('electron');
 
 const api = {
   getLibraryInfo: (): Promise<LibraryInfo> => ipcRenderer.invoke('library:get-info'),
+  getLibraryStartupNotice: (): Promise<string | null> => ipcRenderer.invoke('library:get-startup-notice'),
   backupLibrary: (): Promise<LibraryBackupResult> => ipcRenderer.invoke('library:backup'),
   chooseOpenLibrary: (): Promise<LibraryOpenResult> => ipcRenderer.invoke('library:choose-open'),
   openLibrary: (candidatePath: string, migrationApproved: boolean): Promise<LibraryOpenResult> =>
     ipcRenderer.invoke('library:open', candidatePath, migrationApproved),
+  inspectLibrary: (candidatePath: string): Promise<LibraryOpenResult> => ipcRenderer.invoke('library:inspect', candidatePath),
+  chooseCreateLibrary: (): Promise<LibraryCreateSelection> => ipcRenderer.invoke('library:choose-create'),
+  createLibrary: (candidatePath: string): Promise<LibraryCreateResult> => ipcRenderer.invoke('library:create', candidatePath),
+  onLibraryMenuAction: (callback: (action: LibraryMenuAction) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, action: LibraryMenuAction) => callback(action);
+    ipcRenderer.on('library:menu-action', listener);
+    return () => ipcRenderer.removeListener('library:menu-action', listener);
+  },
   listDocuments: (): Promise<TextDocument[]> => ipcRenderer.invoke('documents:list'),
   listDeletedDocuments: (): Promise<TextDocument[]> => ipcRenderer.invoke('documents:list-deleted'),
   listFolders: (): Promise<Folder[]> => ipcRenderer.invoke('folders:list'),

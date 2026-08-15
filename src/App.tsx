@@ -25,9 +25,18 @@ import {
   trashDocument,
 } from './services/documents';
 import { getErrorMessage, logRendererError } from './services/errors';
-import { backupLibrary, chooseOpenLibrary, getLibraryInfo, openLibrary } from './services/library';
+import {
+  backupLibrary,
+  chooseCreateLibrary,
+  chooseOpenLibrary,
+  createLibrary,
+  getLibraryInfo,
+  getLibraryStartupNotice,
+  inspectLibrary,
+  openLibrary,
+} from './services/library';
 import type { DocumentStatus, Folder, TextDocument } from './types/document';
-import type { LibraryInfo, LibraryInspection, LibraryOpenResult } from './types/library';
+import type { LibraryInfo, LibraryInspection, LibraryMenuAction, LibraryOpenResult } from './types/library';
 
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 type LibraryBackupState = 'idle' | 'saving' | 'success';
@@ -130,6 +139,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const shellRef = useRef<HTMLElement | null>(null);
   const isDirtyRef = useRef(false);
+  const libraryOperationRef = useRef(false);
   const restoreHiddenNavigationAfterSearchRef = useRef(false);
 
   useEffect(() => {
@@ -140,6 +150,13 @@ export default function App() {
       .then(setLibraryInfo)
       .catch((loadError: unknown) => {
         showOperationError('load-library-info', loadError, 'Impossible de lire les informations de la bibliothèque.');
+      });
+    void getLibraryStartupNotice()
+      .then((notice) => {
+        if (notice) setLibraryNotice(notice);
+      })
+      .catch((loadError: unknown) => {
+        logRendererError('load-library-startup-notice', loadError);
       });
   }, []);
 
@@ -594,6 +611,10 @@ export default function App() {
   }
 
   async function handleBackupLibrary() {
+    if (isDirtyRef.current) {
+      setError('Sauvegardez le document avant de créer une copie de la bibliothèque.');
+      return;
+    }
     setError(null);
     setLibraryNotice(null);
     setLibraryBackupState('saving');
@@ -679,34 +700,40 @@ export default function App() {
     setLibraryNotice(`Bibliothèque ouverte : ${result.library.fileName}.`);
   }
 
-  async function handleOpenLibrary() {
+  async function handleOpenLibrary(knownPath?: string) {
+    if (libraryOperationRef.current) return;
     if (!(await confirmDiscardUnsavedChanges())) {
       return;
     }
 
+    libraryOperationRef.current = true;
     setError(null);
     setLibraryNotice(null);
     setLibraryOpenState('choosing');
     let selection: LibraryOpenResult;
     try {
-      selection = await chooseOpenLibrary();
+      selection = knownPath ? await inspectLibrary(knownPath) : await chooseOpenLibrary();
     } catch (openError: unknown) {
       setLibraryOpenState('idle');
+      libraryOperationRef.current = false;
       showOperationError('choose-library', openError, 'Impossible d’ouvrir le sélecteur de bibliothèque.');
       return;
     }
 
     if (selection.status === 'canceled') {
       setLibraryOpenState('idle');
+      libraryOperationRef.current = false;
       return;
     }
     if (selection.status === 'same') {
       setLibraryOpenState('idle');
+      libraryOperationRef.current = false;
       setLibraryNotice('Cette bibliothèque est déjà ouverte.');
       return;
     }
     if (selection.status === 'too-new' || selection.status === 'foreign' || selection.status === 'invalid') {
       setLibraryOpenState('idle');
+      libraryOperationRef.current = false;
       showLibraryOpenResultError(selection);
       return;
     }
@@ -715,6 +742,7 @@ export default function App() {
     if (selection.status === 'needs-migration') {
       setLibraryOpenState('idle');
       if (!selection.inspection || !(await confirmLibraryMigration(selection.inspection))) {
+        libraryOperationRef.current = false;
         return;
       }
       migrationApproved = true;
@@ -744,8 +772,51 @@ export default function App() {
       showOperationError('open-library', openError, 'Impossible d’ouvrir cette bibliothèque.');
     } finally {
       setLibraryOpenState('idle');
+      libraryOperationRef.current = false;
     }
   }
+
+  async function handleNewLibrary() {
+    if (libraryOperationRef.current) return;
+    if (!(await confirmDiscardUnsavedChanges())) return;
+
+    libraryOperationRef.current = true;
+    setError(null);
+    setLibraryNotice(null);
+    setLibraryOpenState('choosing');
+    try {
+      const selection = await chooseCreateLibrary();
+      if (selection.status === 'canceled') return;
+      if (selection.status === 'exists' || !selection.path) {
+        setError('Ce fichier existe déjà. Utilisez « Ouvrir une bibliothèque… » pour travailler avec cette bibliothèque.');
+        return;
+      }
+      setLibraryOpenState('opening');
+      const result = await createLibrary(selection.path);
+      if (result.status === 'exists') {
+        setError('Ce fichier existe déjà. Utilisez « Ouvrir une bibliothèque… » pour travailler avec cette bibliothèque.');
+        return;
+      }
+      if (result.status !== 'created' || !result.library) {
+        setError('Impossible de créer cette bibliothèque.');
+        return;
+      }
+      await finishLibrarySwitch({ status: 'opened', inspection: null, library: result.library, backupPath: null });
+      setLibraryNotice(`Bibliothèque créée : ${result.library.fileName}.`);
+    } catch (createError: unknown) {
+      showOperationError('create-library', createError, 'Impossible de créer cette bibliothèque.');
+    } finally {
+      setLibraryOpenState('idle');
+      libraryOperationRef.current = false;
+    }
+  }
+
+  useEffect(() => window.textotheque.onLibraryMenuAction((menuAction: LibraryMenuAction) => {
+    if (menuAction.action === 'new') void handleNewLibrary();
+    if (menuAction.action === 'open') void handleOpenLibrary();
+    if (menuAction.action === 'known') void handleOpenLibrary(menuAction.path);
+    if (menuAction.action === 'backup') void handleBackupLibrary();
+  }));
 
   async function handleTrashCurrentDocument() {
     if (!selectedDocument || selectedDocumentIsDeleted) {
@@ -1028,10 +1099,6 @@ export default function App() {
           metadataVisible={paneLayout.rightVisible}
           onToggleNavigation={toggleNavigationPane}
           onToggleMetadata={toggleMetadataPane}
-          libraryBackupState={libraryBackupState}
-          libraryOpenState={libraryOpenState}
-          onBackupLibrary={handleBackupLibrary}
-          onOpenLibrary={handleOpenLibrary}
           onSearchChange={handleSearchChange}
           onClearSearch={clearSearchAndReturnToNavigation}
           onSave={handleSave}

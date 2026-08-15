@@ -3,15 +3,19 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  Menu,
   type IpcMainInvokeEvent,
+  type MenuItemConstructorOptions,
   type OpenDialogOptions,
   type SaveDialogOptions,
 } from 'electron';
 import path from 'node:path';
+import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { DocumentInput, type TextothequeDatabase } from './database.js';
-import { ActiveLibraryManager } from './library-manager.js';
+import { ActiveLibraryManager, type LibraryMenuAction } from './library-manager.js';
+import { LibraryHistoryRegistry, type KnownLibrary } from './library-history.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,6 +29,7 @@ app.setName(applicationName);
 
 let mainWindow: BrowserWindow | null = null;
 let libraryManager: ActiveLibraryManager | null = null;
+let libraryHistory: LibraryHistoryRegistry | null = null;
 let closeApproved = false;
 
 function getDatabasePath(): string {
@@ -33,9 +38,17 @@ function getDatabasePath(): string {
 
 function getDatabase(): TextothequeDatabase {
   if (!libraryManager) {
-    libraryManager = new ActiveLibraryManager(getDatabasePath());
+    libraryManager = new ActiveLibraryManager(getDatabasePath(), undefined, getLibraryHistory());
   }
   return libraryManager.getDatabase();
+}
+
+function getLibraryHistory(): LibraryHistoryRegistry {
+  if (!libraryHistory) {
+    const historyPath = process.env.TEXTOTHEQUE_LIBRARY_HISTORY_PATH ?? path.join(app.getPath('userData'), 'library-history.json');
+    libraryHistory = new LibraryHistoryRegistry(historyPath);
+  }
+  return libraryHistory;
 }
 
 function getLibraryManager(): ActiveLibraryManager {
@@ -59,6 +72,8 @@ function registerIpcHandler<Args extends unknown[], Result>(
 
 function registerIpcHandlers(): void {
   registerIpcHandler('library:get-info', () => getDatabase().getLibraryInfo());
+  registerIpcHandler('library:get-startup-notice', () => getLibraryManager().getStartupNotice());
+  registerIpcHandler('library:inspect', (_event, candidatePath: string) => getLibraryManager().inspectCandidate(candidatePath));
   registerIpcHandler('library:choose-open', async () => {
     const options: OpenDialogOptions = {
       title: 'Ouvrir une bibliothèque Textothèque',
@@ -78,8 +93,29 @@ function registerIpcHandlers(): void {
     return getLibraryManager().inspectCandidate(result.filePaths[0]);
   });
   registerIpcHandler('library:open', (_event, candidatePath: string, migrationApproved: boolean) =>
-    getLibraryManager().openCandidate(candidatePath, migrationApproved)
+    getLibraryManager().openCandidate(candidatePath, migrationApproved).then((result) => {
+      if (result.status === 'opened') refreshApplicationMenu();
+      return result;
+    })
   );
+  registerIpcHandler('library:choose-create', async () => {
+    const options: SaveDialogOptions = {
+      title: 'Nouvelle bibliothèque Textothèque',
+      defaultPath: path.join(path.dirname(getDatabase().getLibraryInfo().path), 'Nouvelle-bibliotheque.sqlite'),
+      buttonLabel: 'Créer la bibliothèque',
+      filters: [{ name: 'Bibliothèque SQLite', extensions: ['sqlite'] }],
+      properties: ['showOverwriteConfirmation'],
+    };
+    const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return { status: 'canceled', path: null };
+    if (fs.existsSync(result.filePath)) return { status: 'exists', path: result.filePath };
+    return { status: 'selected', path: result.filePath };
+  });
+  registerIpcHandler('library:create', (_event, candidatePath: string) => {
+    const result = getLibraryManager().createCandidate(candidatePath);
+    if (result.status === 'created') refreshApplicationMenu();
+    return result;
+  });
   registerIpcHandler('library:backup', async () => {
     const library = getDatabase();
     const libraryInfo = library.getLibraryInfo();
@@ -126,6 +162,50 @@ function registerIpcHandlers(): void {
   });
 }
 
+function sendLibraryMenuAction(action: LibraryMenuAction): void {
+  mainWindow?.webContents.send('library:menu-action', action);
+}
+
+function knownLibraryLabels(libraries: KnownLibrary[]): Map<string, string> {
+  const basenameCounts = new Map<string, number>();
+  for (const library of libraries) {
+    const baseName = path.basename(library.path);
+    basenameCounts.set(baseName.toLocaleLowerCase('en-US'), (basenameCounts.get(baseName.toLocaleLowerCase('en-US')) ?? 0) + 1);
+  }
+  return new Map(libraries.map((library) => {
+    const baseName = path.basename(library.path);
+    const duplicate = (basenameCounts.get(baseName.toLocaleLowerCase('en-US')) ?? 0) > 1;
+    const label = duplicate ? `${baseName} — ${path.basename(path.dirname(library.path))}` : baseName;
+    return [library.path, library.available ? label : `${label} [introuvable]`];
+  }));
+}
+
+function refreshApplicationMenu(): void {
+  const manager = getLibraryManager();
+  const knownLibraries = getLibraryHistory().getKnownLibraries();
+  const labels = knownLibraryLabels(knownLibraries);
+  const knownItems: MenuItemConstructorOptions[] = knownLibraries.length > 0
+    ? knownLibraries.map((library) => ({
+        label: labels.get(library.path),
+        type: 'checkbox',
+        checked: manager.getDatabase().isCurrentLibraryPath(library.path),
+        enabled: library.available,
+        click: () => sendLibraryMenuAction({ action: 'known', path: library.path }),
+      }))
+    : [{ label: 'Aucune bibliothèque connue', enabled: false }];
+  const template: MenuItemConstructorOptions[] = [{
+    label: 'Bibliothèque',
+    submenu: [
+      { label: 'Nouvelle bibliothèque…', click: () => sendLibraryMenuAction({ action: 'new' }) },
+      { label: 'Ouvrir une bibliothèque…', click: () => sendLibraryMenuAction({ action: 'open' }) },
+      { label: 'Bibliothèques connues', submenu: knownItems },
+      { type: 'separator' },
+      { label: 'Sauvegarder une copie…', click: () => sendLibraryMenuAction({ action: 'backup' }) },
+    ],
+  }];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 async function createWindow(): Promise<void> {
   closeApproved = false;
   mainWindow = new BrowserWindow({
@@ -147,6 +227,8 @@ async function createWindow(): Promise<void> {
   } else {
     await mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
+
+  refreshApplicationMenu();
 
   mainWindow.on('close', (event) => {
     if (closeApproved) {

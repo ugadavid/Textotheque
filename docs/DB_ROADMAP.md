@@ -914,9 +914,9 @@ Choix réalisés :
 
 ---
 
-## 0.1.18 — Gestion durable des bibliothèques
+## 0.1.18 — Gestion durable des bibliothèques (réalisée)
 
-Objectifs :
+Objectifs réalisés :
 
 - créer `Nouvelle bibliothèque…` ;
 - inaugurer le menu racine `Bibliothèque` ;
@@ -932,6 +932,16 @@ Objectifs :
 - permettre la bascule rapide vers une bibliothèque connue.
 
 Le registre est une préférence de l’application Textothèque, pas une donnée métier contenue dans une bibliothèque.
+
+Choix réalisés :
+
+- registre JSON versionné sous `userData`, sans limite ni purge automatique ;
+- écriture par fichier temporaire puis renommage ;
+- copie identifiable d’un registre invalide avant retour à un état sain ;
+- création exclusive refusant tout fichier préexistant ;
+- menu `Bibliothèque` pilotant le workflow React existant ;
+- réouverture automatique uniquement d’une dernière base directement compatible ;
+- fallback vers la bibliothèque par défaut, sans migration silencieuse, pour un chemin absent, legacy, trop récent ou invalide.
 
 ---
 

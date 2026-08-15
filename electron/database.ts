@@ -396,9 +396,9 @@ export class TextothequeDatabase {
   private db: Database.Database;
   private readonly dbPath: string;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, reservedNewDatabase = false) {
     this.dbPath = path.resolve(dbPath);
-    const databaseAlreadyExisted = fs.existsSync(this.dbPath);
+    const databaseAlreadyExisted = fs.existsSync(this.dbPath) && !reservedNewDatabase;
     fs.mkdirSync(path.dirname(this.dbPath), { recursive: true });
     this.db = new Database(this.dbPath);
 
@@ -821,4 +821,21 @@ export class TextothequeDatabase {
 
 export function createTextothequeDatabase(dbPath: string): TextothequeDatabase {
   return new TextothequeDatabase(dbPath);
+}
+
+export function createNewTextothequeDatabase(dbPath: string): TextothequeDatabase {
+  const resolvedPath = path.resolve(dbPath);
+  fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
+  const descriptor = fs.openSync(resolvedPath, 'wx');
+  fs.closeSync(descriptor);
+  try {
+    return new TextothequeDatabase(resolvedPath, true);
+  } catch (error) {
+    try {
+      fs.unlinkSync(resolvedPath);
+    } catch (cleanupError) {
+      console.error('[Database new-library cleanup]', cleanupError);
+    }
+    throw error;
+  }
 }

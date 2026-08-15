@@ -12,7 +12,11 @@ const outputPrefix = 'textotheque ipc error check: ';
 try {
   const result = spawnSync(electronPath, [mainPath, '--textotheque-check-ipc-error'], {
     cwd: projectRoot,
-    env: { ...process.env, TEXTOTHEQUE_DB_PATH: invalidDatabasePath },
+    env: {
+      ...process.env,
+      TEXTOTHEQUE_DB_PATH: invalidDatabasePath,
+      TEXTOTHEQUE_LIBRARY_HISTORY_PATH: path.join(invalidDatabasePath, 'library-history.json'),
+    },
     encoding: 'utf8',
     windowsHide: true,
   });

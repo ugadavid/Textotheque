@@ -65,6 +65,16 @@ let documents = [
 let folders = [];
 let libraryBackupInvocations = 0;
 let libraryChooseOpenInvocations = 0;
+let libraryChooseCreateInvocations = 0;
+let libraryInspectInvocations = 0;
+let libraryOpenInvocations = 0;
+let libraryInfo = {
+  path: 'C:\\temporary\\test-ui.sqlite',
+  fileName: 'test-ui.sqlite',
+  applicationId: 1413830735,
+  userVersion: 2,
+  isTextotheque: true,
+};
 const forcedFailureCounts = new Map();
 
 function forceFailures(channel, count = 1) {
@@ -87,26 +97,54 @@ function cloneDocument(document) {
 app
   .whenReady()
   .then(async () => {
-    ipcMain.handle('library:get-info', () => ({
-      path: 'C:\\temporary\\test-ui.sqlite',
-      fileName: 'test-ui.sqlite',
-      applicationId: 1413830735,
-      userVersion: 2,
-      isTextotheque: true,
-    }));
-    ipcMain.handle('library:backup', () => {
+    ipcMain.handle('library:get-info', () => ({ ...libraryInfo }));
+    ipcMain.handle('library:get-startup-notice', () => null);
+    ipcMain.handle('library:backup', (event) => {
       rejectIfForced('library:backup');
       libraryBackupInvocations += 1;
-      return libraryBackupInvocations === 1
-        ? { canceled: true, path: null, fileName: null, error: null }
-        : { canceled: false, path: 'C:\\temporary\\backup.sqlite', fileName: 'backup.sqlite', error: null };
+      if (libraryBackupInvocations === 1) event.sender.send('library:menu-action', { action: 'backup' });
+      return { canceled: true, path: null, fileName: null, error: null };
     });
-    ipcMain.handle('library:choose-open', () => {
+    ipcMain.handle('library:choose-open', (event) => {
       libraryChooseOpenInvocations += 1;
+      if (libraryChooseOpenInvocations === 1) event.sender.send('library:menu-action', { action: 'open' });
       return { status: 'canceled', inspection: null, library: null, backupPath: null };
     });
-    ipcMain.handle('library:open', () => {
-      throw new Error('library:open should not be invoked by the cancellation safeguard');
+    ipcMain.handle('library:inspect', (event, candidatePath) => {
+      libraryInspectInvocations += 1;
+      if (libraryInspectInvocations === 1) event.sender.send('library:menu-action', { action: 'known', path: candidatePath });
+      return {
+        status: 'compatible',
+        inspection: { path: candidatePath, fileName: path.basename(candidatePath), readable: true, applicationId: 1413830735, userVersion: 2, isTextotheque: true, compatibility: 'compatible' },
+        library: null,
+        backupPath: null,
+      };
+    });
+    ipcMain.handle('library:choose-create', (event) => {
+      libraryChooseCreateInvocations += 1;
+      if (libraryChooseCreateInvocations === 1) event.sender.send('library:menu-action', { action: 'new' });
+      return { status: 'canceled', path: null };
+    });
+    ipcMain.handle('library:create', () => ({ status: 'create-failed', library: null }));
+    ipcMain.handle('library:open', (_event, candidatePath) => {
+      libraryOpenInvocations += 1;
+      libraryInfo = { ...libraryInfo, path: candidatePath, fileName: path.basename(candidatePath) };
+      documents = [{
+        id: 101,
+        title: 'Document bibliothèque B',
+        content: 'Contenu B',
+        content_format: 'plain',
+        status: 'active',
+        favorite: 0,
+        created_at: '2026-08-15T00:00:00.000Z',
+        updated_at: '2026-08-15T00:00:00.000Z',
+        last_opened_at: null,
+        deleted_at: null,
+        notes: '',
+        folder_id: null,
+      }];
+      folders = [];
+      return { status: 'opened', inspection: null, library: { ...libraryInfo }, backupPath: null };
     });
     ipcMain.handle('documents:list', () => {
       rejectIfForced('documents:list');
@@ -330,26 +368,8 @@ app
         if (document.querySelector('.status-bar .library-name').title !== ${JSON.stringify('C:\\temporary\\test-ui.sqlite')}) {
           throw new Error('current library full path tooltip missing');
         }
-        const libraryBackupButton = document.querySelector('.library-backup-button');
-        if (!libraryBackupButton || !libraryBackupButton.textContent.includes('Copie bibliothèque')) {
-          throw new Error('library backup action missing');
-        }
-        const libraryOpenButton = document.querySelector('.library-open-button');
-        if (!libraryOpenButton || !libraryOpenButton.textContent.includes('Ouvrir bibliothèque')) {
-          throw new Error('library open action missing');
-        }
-        libraryBackupButton.click();
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        if (document.querySelector('.success-message') || document.querySelector('.error-message')) {
-          throw new Error('canceling library backup should not show feedback as success or error');
-        }
-        libraryBackupButton.click();
-        await waitFor(
-          () => document.querySelector('.success-message')?.textContent.includes('backup.sqlite'),
-          'library backup success feedback'
-        );
-        if (document.querySelector('.error-message')) {
-          throw new Error('successful library backup should not show an error');
+        if (document.querySelector('.library-backup-button') || document.querySelector('.library-open-button')) {
+          throw new Error('occasional library actions should be removed from the toolbar');
         }
         const searchInput = document.querySelector('.search-input-row input');
         if (!searchInput) throw new Error('search input missing');
@@ -362,7 +382,7 @@ app
         }
         const viewButtons = document.querySelectorAll('.nav-view-button');
         if (viewButtons.length !== 2) throw new Error('document view buttons missing');
-        if (expectedAppVersion !== '0.1.17') throw new Error('unexpected application version');
+        if (expectedAppVersion !== '0.1.18') throw new Error('unexpected application version');
         const initialExpandedState = JSON.parse(window.localStorage.getItem('textotheque:expanded-folders:v2') ?? '[]');
         if (initialExpandedState.length !== 0) throw new Error('folders should be closed by default');
         await waitFor(() => window.localStorage.getItem('textotheque:pane-layout:v2'), 'pane layout stored');
@@ -661,12 +681,28 @@ app
         editor.dispatchEvent(new Event('input', { bubbles: true }));
         await waitFor(() => document.querySelector('.title-dirty-marker'), 'dirty marker visible');
         await waitFor(() => document.querySelector('.status-bar')?.textContent.includes('Modifie'), 'status dirty state');
-        document.querySelector('.library-open-button').click();
+        await window.textotheque.chooseOpenLibrary();
         await waitFor(() => document.querySelector('.confirm-dialog'), 'library switch respects dirty confirmation');
         document.querySelector('.confirm-dialog .secondary-button').click();
         await waitFor(() => !document.querySelector('.confirm-dialog'), 'library switch confirmation canceled');
         if (!document.querySelector('.title-dirty-marker')) {
           throw new Error('canceling a dirty library switch cleared pending edits');
+        }
+        await window.textotheque.chooseCreateLibrary();
+        await waitFor(() => document.querySelector('.confirm-dialog'), 'new library respects dirty confirmation');
+        document.querySelector('.confirm-dialog .secondary-button').click();
+        await waitFor(() => !document.querySelector('.confirm-dialog'), 'new library confirmation canceled');
+        await window.textotheque.inspectLibrary('C:\\temporary\\known.sqlite');
+        await waitFor(() => document.querySelector('.confirm-dialog'), 'known library respects dirty confirmation');
+        document.querySelector('.confirm-dialog .secondary-button').click();
+        await waitFor(() => !document.querySelector('.confirm-dialog'), 'known library confirmation canceled');
+        await window.textotheque.backupLibrary();
+        await waitFor(
+          () => document.querySelector('.error-message')?.textContent.includes('Sauvegardez le document avant'),
+          'dirty backup refused'
+        );
+        if (!document.querySelector('.title-dirty-marker')) {
+          throw new Error('dirty backup refusal cleared pending edits');
         }
         const dirtyTitleBeforeToggle = document.querySelector('.title-input').value;
         document.querySelector('.toggle-navigation-button').click();
@@ -877,17 +913,17 @@ app
     if (!result.ok) {
       throw new Error(`UI safeguards check failed: ${result.errorStack ?? 'unknown error'}`);
     }
-    if (libraryBackupInvocations !== 2) {
-      throw new Error(`Library backup cancellation and success should invoke IPC twice, got ${libraryBackupInvocations}.`);
+    if (libraryBackupInvocations !== 1) {
+      throw new Error(`Dirty backup should stop the menu workflow before a second IPC call, got ${libraryBackupInvocations}.`);
     }
-    if (libraryChooseOpenInvocations !== 0) {
-      throw new Error(`Dirty cancellation must happen before native selection, got ${libraryChooseOpenInvocations} invocation(s).`);
+    if (libraryChooseOpenInvocations !== 1 || libraryChooseCreateInvocations !== 1 || libraryInspectInvocations !== 1) {
+      throw new Error('A dirty menu action reached its library IPC after cancellation.');
     }
 
     forceFailures('library:backup');
+    window.webContents.send('library:menu-action', { action: 'backup' });
     const backupFailureResult = await window.webContents.executeJavaScript(`
       (async () => {
-        document.querySelector('.library-backup-button').click();
         const start = Date.now();
         while (Date.now() - start < 3000) {
           const message = document.querySelector('.error-message')?.textContent ?? '';
@@ -1110,6 +1146,45 @@ app
     `);
     if (!trashFailureResult.ok) {
       throw new Error(`Trash failure check failed: ${trashFailureResult.message}`);
+    }
+
+    await window.webContents.executeJavaScript(`
+      (() => {
+        const input = document.querySelector('.search-input-row input');
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'ancienne recherche');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      })()
+    `);
+    window.webContents.send('library:menu-action', { action: 'known', path: 'C:\\temporary\\library-b.sqlite' });
+    const switchResult = await window.webContents.executeJavaScript(`
+      (async () => {
+        const start = Date.now();
+        while (Date.now() - start < 3000) {
+          const libraryName = document.querySelector('.status-bar .library-name')?.textContent ?? '';
+          const workspaceText = document.querySelector('.app-shell')?.textContent ?? '';
+          if (libraryName.includes('library-b.sqlite') && document.querySelector('.status-bar')?.textContent.includes('1 document')) {
+            return {
+              ok: !document.querySelector('.title-input') &&
+                document.querySelector('.search-input-row input')?.value === '' &&
+                document.querySelector('.status-bar')?.textContent.includes('1 document') &&
+                !workspaceText.includes('Premier document'),
+              libraryName,
+              workspaceText,
+            };
+          }
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        }
+        return {
+          ok: false,
+          message: 'successful known-library switch did not refresh the UI',
+          dialog: document.querySelector('.confirm-dialog')?.textContent ?? null,
+          error: document.querySelector('.error-message')?.textContent ?? null,
+          library: document.querySelector('.status-bar .library-name')?.textContent ?? null,
+        };
+      })()
+    `);
+    if (!switchResult.ok) {
+      throw new Error(`Known library UI refresh check failed: ${JSON.stringify(switchResult)}; inspect=${libraryInspectInvocations}; open=${libraryOpenInvocations}`);
     }
 
     const unexpectedRejectionLog = rendererConsoleMessages.find((message) =>

@@ -12,16 +12,12 @@ interface EditorPaneProps {
   searchQuery: string;
   navigationVisible: boolean;
   metadataVisible: boolean;
-  libraryBackupState: 'idle' | 'saving' | 'success';
-  libraryOpenState: 'idle' | 'choosing' | 'opening';
   onTitleChange: (value: string) => void;
   onContentChange: (value: string) => void;
   onSearchChange: (value: string) => void;
   onClearSearch: () => void;
   onToggleNavigation: () => void;
   onToggleMetadata: () => void;
-  onBackupLibrary: () => void;
-  onOpenLibrary: () => void;
   onSave: () => void;
   onTrash: () => void;
   onRestore: () => void;
@@ -47,16 +43,12 @@ export default function EditorPane({
   searchQuery,
   navigationVisible,
   metadataVisible,
-  libraryBackupState,
-  libraryOpenState,
   onTitleChange,
   onContentChange,
   onSearchChange,
   onClearSearch,
   onToggleNavigation,
   onToggleMetadata,
-  onBackupLibrary,
-  onOpenLibrary,
   onSave,
   onTrash,
   onRestore,
@@ -101,25 +93,6 @@ export default function EditorPane({
           {searchQuery.trim() ? <button className="clear-search-button" type="button" onClick={onClearSearch} title="Vider la recherche" aria-label="Vider la recherche">×</button> : null}
         </div>
         <div className="save-controls">
-          <button
-            className="secondary-button library-open-button"
-            type="button"
-            onClick={onOpenLibrary}
-            disabled={libraryOpenState !== 'idle' || libraryBackupState === 'saving'}
-            title="Ouvrir une bibliothèque Textothèque existante"
-          >
-            {libraryOpenState === 'idle' ? 'Ouvrir bibliothèque…' : 'Ouverture…'}
-          </button>
-          <button
-            className="secondary-button library-backup-button"
-            type="button"
-            onClick={onBackupLibrary}
-            disabled={libraryBackupState === 'saving' || libraryOpenState !== 'idle'}
-            title="Sauvegarder une copie complète de la bibliothèque"
-            aria-label="Sauvegarder une copie de la bibliothèque"
-          >
-            {libraryBackupState === 'saving' ? 'Copie…' : 'Copie bibliothèque…'}
-          </button>
           {document ? <>
             <span className={`save-state ${saveState}`}>{saveLabels[saveState]}</span>
             {isDeleted ? (

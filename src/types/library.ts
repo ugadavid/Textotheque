@@ -44,3 +44,19 @@ export interface LibraryOpenResult {
   library: LibraryInfo | null;
   backupPath: string | null;
 }
+
+export interface LibraryCreateSelection {
+  status: 'canceled' | 'selected' | 'exists';
+  path: string | null;
+}
+
+export interface LibraryCreateResult {
+  status: 'created' | 'exists' | 'create-failed';
+  library: LibraryInfo | null;
+}
+
+export type LibraryMenuAction =
+  | { action: 'new' }
+  | { action: 'open' }
+  | { action: 'known'; path: string }
+  | { action: 'backup' };
