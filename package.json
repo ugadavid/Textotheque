@@ -1,5 +1,6 @@
 {
   "name": "textotheque",
+  "productName": "Textotheque",
   "version": "0.1.13",
   "private": true,
   "type": "module",
@@ -14,6 +15,7 @@
     "test:db": "tsc -p electron/tsconfig.json && electron scripts/electron-db-check.cjs",
     "test:preload": "tsc -p electron/tsconfig.json && electron scripts/electron-preload-api-check.cjs",
     "test:ui-safeguards": "npm run build && electron scripts/electron-ui-safeguards-check.cjs",
+    "test:app-identity": "npm run build && node scripts/electron-app-identity-check.cjs",
     "test:electron-sqlite": "electron scripts/electron-sqlite-smoke.cjs",
     "test:legacy-migration": "tsc -p electron/tsconfig.json && electron scripts/electron-legacy-migration-check.cjs"
   },

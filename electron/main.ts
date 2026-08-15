@@ -1,19 +1,29 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { createTextothequeDatabase, DocumentInput, TextothequeDatabase } from './database.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const require = createRequire(import.meta.url);
+const packageMetadata = require('../package.json') as { name: string; productName?: string };
+const applicationName = packageMetadata.productName ?? packageMetadata.name;
+const identityCheckRequested = process.argv.includes('--textotheque-check-app-identity');
+
+app.setName(applicationName);
 
 let mainWindow: BrowserWindow | null = null;
 let database: TextothequeDatabase | null = null;
 let closeApproved = false;
 
+function getDatabasePath(): string {
+  return process.env.TEXTOTHEQUE_DB_PATH ?? path.join(app.getPath('userData'), 'textotheque.sqlite');
+}
+
 function getDatabase(): TextothequeDatabase {
   if (!database) {
-    const dbPath = process.env.TEXTOTHEQUE_DB_PATH ?? path.join(app.getPath('userData'), 'textotheque.sqlite');
-    database = createTextothequeDatabase(dbPath);
+    database = createTextothequeDatabase(getDatabasePath());
   }
   return database;
 }
@@ -72,6 +82,20 @@ async function createWindow(): Promise<void> {
 }
 
 app.whenReady().then(() => {
+  if (identityCheckRequested) {
+    console.log(
+      `textotheque app identity: ${JSON.stringify({
+        name: app.getName(),
+        appData: app.getPath('appData'),
+        userData: app.getPath('userData'),
+        sessionData: app.getPath('sessionData'),
+        database: getDatabasePath(),
+      })}`
+    );
+    app.quit();
+    return;
+  }
+
   registerIpcHandlers();
   void createWindow();
 
