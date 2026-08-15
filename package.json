@@ -6,7 +6,7 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "postinstall": "npm run rebuild:electron",
-    "rebuild:electron": "npm rebuild better-sqlite3 --runtime=electron --target=33.3.2 --disturl=https://electronjs.org/headers",
+    "rebuild:electron": "node scripts/rebuild-electron-native.cjs",
     "dev": "concurrently -k \"vite\" \"npm:dev:electron\"",
     "dev:electron": "wait-on http://localhost:5173 && tsc -p electron/tsconfig.json && electron dist-electron/main.js",
     "build": "tsc -b && vite build && tsc -p electron/tsconfig.json",
