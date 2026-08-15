@@ -13,10 +13,13 @@ Le projet avance volontairement par **baby steps** : petites missions, périmèt
 Avant de modifier quoi que ce soit :
 
 1. lire `README.md` en entier ;
-2. lire `reports/015_project_state_audit.md` ;
-3. lire les rapports des missions directement liées au sujet traité ;
-4. vérifier le code réel avant de se fier aux rapports historiques ;
-5. exécuter :
+2. lire `AGENTS.md` en entier ;
+3. lire `reports/015_project_state_audit.md` pour le contexte historique de reprise ;
+4. lire les rapports récents directement liés au sujet traité ;
+5. si la mission touche aux bibliothèques SQLite, lire aussi :
+   - `docs/DB_ROADMAP.md` ;
+6. vérifier le code réel avant de se fier aux rapports historiques ;
+7. exécuter :
 
 ```powershell
 git status --short
@@ -26,6 +29,8 @@ git diff --stat
 Ne jamais supposer que le worktree est propre.
 
 Ne jamais écraser, nettoyer ou remettre à zéro des modifications existantes sans demande explicite.
+
+Le code réel reste la vérité finale lorsqu’un ancien rapport ou document décrit un état devenu obsolète.
 
 ---
 
@@ -52,25 +57,31 @@ Règle générale :
 - les abstractions prématurées ;
 - les changements de stack ;
 - les dépendances ajoutées « au cas où » ;
-- les fonctionnalités annexes ajoutées pendant une mission différente.
+- les fonctionnalités annexes ajoutées pendant une mission différente ;
+- les garde-fous disproportionnés par rapport au besoin réel.
+
+Textothèque est un outil personnel d’écriture et de classement, pas un système bancaire.
+
+La simplicité reste un objectif technique.
 
 ---
 
 ## 3. Principe fondamental : DB-first
 
-La base SQLite est la source de vérité pour les documents.
+SQLite est la source de vérité pour les documents et l’organisation métier.
 
 Un document Textothèque ne doit pas dépendre d’un fichier externe pour exister.
 
-Les fichiers externes seront, lorsqu’ils seront implémentés :
+Les fichiers externes sont ou seront :
 
 - des imports volontaires ;
 - des exports volontaires ;
+- des sauvegardes explicites de bibliothèque ;
 - jamais le stockage documentaire principal.
 
 Ne pas transformer Textothèque en explorateur de fichiers.
 
-Ne pas créer automatiquement un fichier `.txt`, `.md` ou autre pour chaque document.
+Ne pas créer automatiquement un `.txt`, `.md` ou autre fichier externe pour chaque document.
 
 ---
 
@@ -85,7 +96,7 @@ React / App
 → preload Electron
 → IPC
 → main process
-→ TextothequeDatabase
+→ ActiveLibraryManager / TextothequeDatabase
 → better-sqlite3
 → SQLite
 ```
@@ -108,141 +119,368 @@ contextIsolation: true
 nodeIntegration: false
 ```
 
-Le preload est actuellement :
+Le preload est :
 
 ```text
 electron/preload.cts
 ```
 
-Il est compilé en CommonJS :
+et compile en :
 
 ```text
 dist-electron/preload.cjs
 ```
 
-Ce choix corrige un bug historique de chargement du preload.
+Ce choix corrige un bug historique de preload ESM.
 
 Ne pas revenir à un preload ESM classique sans raison explicite et tests adaptés.
 
 ---
 
-## 5. SQLite et données
+## 5. Identité Electron et profil utilisateur
 
-La couche SQLite principale est :
-
-```text
-electron/database.ts
-```
-
-À l’état actuel du projet, `electron/database.ts` est la source réellement exécutée.
-
-`db/schema.sql` est une représentation déclarative du schéma et doit rester synchronisé tant qu’aucune source canonique unique n’a été mise en place.
-
-### Emplacement de la base
-
-Par défaut :
+Textothèque possède désormais une identité Electron explicite :
 
 ```text
-app.getPath('userData')/textotheque.sqlite
+productName / app name : Textotheque
 ```
 
-Pour les tests et audits, utiliser de préférence :
+Le profil utilisateur est :
+
+```text
+%APPDATA%\Textotheque
+```
+
+La bibliothèque par défaut est conceptuellement :
+
+```text
+%APPDATA%\Textotheque\textotheque.sqlite
+```
+
+Le registre durable des bibliothèques connues vit également dans le profil Textothèque.
+
+Ne pas revenir au profil générique :
+
+```text
+%APPDATA%\Electron
+```
+
+Le test ciblé est :
+
+```powershell
+npm.cmd run test:app-identity
+```
+
+La surcharge :
 
 ```text
 TEXTOTHEQUE_DB_PATH
 ```
 
-avec une base temporaire.
-
-Ne jamais utiliser la base utilisateur réelle pour un test automatisé.
+reste prioritaire pour les tests, diagnostics et lancements contrôlés.
 
 ---
 
-## 6. Règles absolues pour les migrations SQLite
+## 6. Bibliothèques Textothèque : identité et schéma
 
-Toute migration doit respecter cet ordre :
+Une bibliothèque Textothèque possède deux identifiants distincts.
+
+### Identité de format
 
 ```text
-1. ouverture de la base
-2. création des tables de base si nécessaire
-3. migrations de colonnes / structure
-4. création des index dépendants
-5. opérations applicatives
+TEXTOTHEQUE_APPLICATION_ID
+hex      : 0x5445584F
+decimal  : 1413830735
+mnemonic : TEXO
+```
+
+Cet identifiant est **permanent**.
+
+Ne jamais le modifier en fonction de la version de l’application.
+
+### Version de schéma
+
+SQLite utilise :
+
+```sql
+PRAGMA user_version
+```
+
+Le schéma courant est actuellement :
+
+```text
+CURRENT_SCHEMA_VERSION = 2
+```
+
+La version de schéma est indépendante de la version applicative.
+
+---
+
+## 7. Source canonique du schéma et migrations SQLite
+
+La source canonique runtime est :
+
+```text
+electron/database.ts
+```
+
+`db/schema.sql` est un snapshot documentaire du schéma courant. Il n’est pas exécuté par l’application.
+
+Toute future évolution structurelle doit :
+
+1. incrémenter `CURRENT_SCHEMA_VERSION` ;
+2. ajouter une migration explicite et ordonnée ;
+3. rendre la migration idempotente ;
+4. utiliser une transaction lorsque plusieurs opérations dépendent les unes des autres ;
+5. mettre à jour `PRAGMA user_version` seulement après réussite ;
+6. mettre à jour le snapshot `db/schema.sql` ;
+7. ajouter ou adapter une fixture legacy ;
+8. conserver les données existantes.
+
+Ordre d’initialisation à préserver :
+
+```text
+1. ouvrir SQLite
+2. configurer les PRAGMA nécessaires
+3. créer / reconnaître le socle
+4. détecter identité + version
+5. appliquer les migrations dans l’ordre
+6. valider le schéma final
+7. créer / vérifier les index
+8. seulement ensuite exécuter les opérations applicatives
 ```
 
 Ne jamais créer un index dépendant d’une colonne avant d’avoir garanti l’existence de cette colonne.
 
 Ce problème a déjà provoqué un bug réel avec `deleted_at`.
 
-### Pour toute nouvelle migration sensible
+---
 
-- vérifier l’état existant avec `PRAGMA`, `sqlite_master` ou équivalent ;
-- rendre la migration idempotente ;
-- ne jamais supprimer ou recréer la base utilisateur pour « simplifier » ;
-- préserver les données existantes ;
-- ajouter ou adapter un test legacy ;
-- vérifier les données avant/après ;
-- utiliser une transaction pour une migration complexe ;
-- créer les index seulement après les migrations correspondantes.
+## 8. Compatibilité legacy
 
-Test existant :
+Les anciennes bases Textothèque sans `application_id` peuvent être reconnues uniquement si leur structure correspond exactement à un état historique connu.
+
+Une base non signée arbitraire ne doit jamais être adoptée comme Textothèque.
+
+Après adoption/migration réussie :
+
+```text
+application_id = TEXO
+```
+
+Une base étrangère signée différemment doit être refusée sans mutation.
+
+Une base avec :
+
+```text
+user_version > CURRENT_SCHEMA_VERSION
+```
+
+doit être refusée sans downgrade ni ouverture forcée.
+
+Test principal :
 
 ```powershell
 npm.cmd run test:legacy-migration
 ```
 
-Toute nouvelle migration importante doit conserver ou étendre cette couverture.
+---
+
+## 9. Inspection d’une bibliothèque
+
+Toute bibliothèque choisie manuellement doit être inspectée **en lecture seule avant toute mutation**.
+
+L’inspection doit déterminer au minimum :
+
+- SQLite lisible ou non ;
+- `application_id` ;
+- `user_version` ;
+- identité Textothèque / legacy / étrangère ;
+- compatibilité ;
+- schéma trop récent ou incohérent.
+
+L’inspection ne doit pas déclencher :
+
+- migration ;
+- adoption ;
+- création d’index ;
+- nettoyage des brouillons ;
+- mise à jour de `last_opened_at` ;
+- autre écriture applicative.
 
 ---
 
-## 7. État actuel du modèle
+## 10. Ouverture et changement de bibliothèque
 
-Tables réellement utilisées :
-
-```text
-documents
-folders
-```
-
-### Documents
-
-Le document gère actuellement notamment :
-
-- titre ;
-- contenu ;
-- `content_format` ;
-- statut ;
-- favori ;
-- dossier ;
-- dates ;
-- corbeille logique via `deleted_at` ;
-- notes internes.
-
-Formats autorisés par le schéma :
+La bascule doit rester atomique :
 
 ```text
-plain
-markdown
-rich
+ouvrir candidat
+→ vérifier lectures minimales
+→ remplacer seulement ensuite la connexion active
+→ fermer l’ancienne connexion
 ```
 
-Mais seul `plain` est actuellement réellement utilisé.
+En cas d’échec du candidat :
 
-Ne pas introduire Markdown ou `rich` au détour d’une autre mission.
+> la bibliothèque actuelle reste active et utilisable.
 
-### Dossiers
+Ne jamais fermer d’abord l’ancienne base puis « espérer » que la suivante s’ouvre.
 
-Les dossiers sont virtuels et stockés en SQLite.
+Le dirty state doit être protégé avant :
 
-Un document appartient actuellement à zéro ou un dossier via `folder_id`.
-
-Les dossiers peuvent avoir des sous-dossiers via `parent_id`.
-
-Ne pas transformer ces dossiers virtuels en dossiers physiques Windows.
+- `Nouvelle bibliothèque…` ;
+- `Ouvrir une bibliothèque…` ;
+- bascule depuis `Bibliothèques connues`.
 
 ---
 
-## 8. Corbeille et opérations destructives
+## 11. Migration utilisateur
+
+Une bibliothèque choisie manuellement qui nécessite une migration ou une adoption TEXO ne doit jamais être modifiée silencieusement.
+
+Flux obligatoire :
+
+```text
+inspection
+→ information utilisateur
+→ accord
+→ backup pré-migration
+→ vérification du backup
+→ migration / adoption
+→ validation
+→ ouverture
+```
+
+Si le backup échoue :
+
+```text
+migration annulée
+```
+
+Si la migration échoue :
+
+- ne pas basculer ;
+- conserver la bibliothèque actuelle ;
+- conserver le backup pré-migration ;
+- afficher une erreur utilisateur simple ;
+- journaliser le détail technique.
+
+Ne pas créer un second moteur de migrations pour les bibliothèques ouvertes manuellement : réutiliser le moteur runtime versionné.
+
+---
+
+## 12. Sauvegardes de bibliothèque
+
+La commande de sauvegarde crée un **snapshot SQLite cohérent**, pas une copie naïve du fichier actif.
+
+Le mécanisme actuel utilise :
+
+```text
+better-sqlite3.backup()
+```
+
+Après sauvegarde, le snapshot est inspecté.
+
+Un backup manuel :
+
+- contient toute la bibliothèque ;
+- ne change jamais la bibliothèque active ;
+- ne devient jamais automatiquement une bibliothèque connue ;
+- ne doit pas écraser la bibliothèque source.
+
+Si le document courant est dirty, ne pas produire silencieusement un backup incomplet : demander d’abord de sauvegarder le document.
+
+---
+
+## 13. Registre durable des bibliothèques connues
+
+Le registre appartient à l’application Textothèque, jamais à une bibliothèque SQLite.
+
+Fichier par défaut :
+
+```text
+%APPDATA%\Textotheque\library-history.json
+```
+
+Le registre contient uniquement des informations d’usage, par exemple :
+
+```json
+{
+  "version": 1,
+  "lastActivePath": "J:\\Textes\\M2.sqlite",
+  "libraries": [
+    {
+      "path": "J:\\Textes\\M2.sqlite",
+      "firstOpenedAt": "2026-08-15T20:00:00.000Z",
+      "lastOpenedAt": "2026-08-15T22:12:00.000Z"
+    }
+  ]
+}
+```
+
+Règles :
+
+- aucune limite numérique ;
+- aucune purge automatique ;
+- ajout uniquement après activation réussie ;
+- `firstOpenedAt` est conservé ;
+- `lastOpenedAt` est mis à jour après activation réussie ;
+- doublons évités via chemin canonique ;
+- backups exclus du registre ;
+- candidats refusés exclus du registre ;
+- bibliothèques manquantes conservées comme introuvables ;
+- ne jamais recréer automatiquement un fichier à partir d’une entrée historique.
+
+Une panne du registre ne doit jamais rendre inutilisable une bibliothèque déjà activée.
+
+---
+
+## 14. Démarrage et dernière bibliothèque
+
+Au démarrage, Textothèque tente de rouvrir :
+
+```text
+lastActivePath
+```
+
+uniquement si la bibliothèque existe et est directement compatible.
+
+Si elle est :
+
+- absente ;
+- legacy nécessitant intervention ;
+- trop récente ;
+- étrangère ;
+- invalide ;
+
+Textothèque revient proprement à la bibliothèque par défaut.
+
+Aucune migration silencieuse d’une bibliothèque externe au démarrage.
+
+L’entrée historique problématique reste conservée.
+
+---
+
+## 15. Nouvelle bibliothèque
+
+`Nouvelle bibliothèque…` doit :
+
+1. respecter le dirty guard ;
+2. refuser d’écraser un fichier préexistant ;
+3. créer un fichier TEXO neuf ;
+4. initialiser le schéma courant ;
+5. valider ;
+6. basculer atomiquement ;
+7. inscrire la bibliothèque au registre après succès.
+
+En cas d’échec de création, ne supprimer que le fichier dont Textothèque sait avec certitude qu’elle vient de créer pendant ce flux.
+
+Ne jamais nettoyer un fichier préexistant.
+
+---
+
+## 16. Corbeille et opérations destructives
 
 La mise à la corbeille est logique :
 
@@ -262,47 +500,479 @@ Ne pas mélanger :
 
 - mise à la corbeille ;
 - restauration ;
-- vidage de corbeille ;
-- futures suppressions éventuelles.
+- vidage ;
+- futures suppressions documentaires ou de dossiers.
 
-Le nettoyage des brouillons strictement vides se fait au démarrage après les migrations et passe par la corbeille logique.
+Le nettoyage des brouillons strictement vides se fait au démarrage après migrations et passe par la corbeille logique.
 
 ---
 
-## 9. Versionnement : baby steps
+## 17. Cohérence légère des dossiers
 
-Textothèque suit une logique de versionnement lente.
+Textothèque utilise volontairement des garde-fous applicatifs simples.
+
+Lors d’une écriture :
+
+```text
+documents.folder_id != NULL
+→ le dossier doit exister
+```
+
+```text
+folders.parent_id != NULL
+→ le parent doit exister
+```
+
+Ne pas activer brutalement les clés étrangères SQLite, cascades ou règles complexes sans mission dédiée et besoin réel.
+
+Les API actuelles ne permettent pas encore de déplacement/changement de parent de dossier : ne pas anticiper inutilement un moteur de cycles.
+
+---
+
+## 18. Dates persistées
+
+La convention applicative est :
+
+```text
+UTC
+ISO 8601
+new Date().toISOString()
+```
+
+La couche DB utilise le helper local `nowIso()` pour les écritures temporelles.
+
+Les anciens defaults SQL `datetime('now')` restent des filets de secours historiques.
+
+Ne pas lancer une migration de dates sans besoin fonctionnel réel.
+
+---
+
+## 19. Versionnement applicatif : baby steps
+
+La source canonique de version est :
+
+```text
+package.json
+```
+
+Vite injecte la version dans le renderer via :
+
+```text
+__APP_VERSION__
+```
+
+Ne pas recréer une seconde constante de version dans `src/`.
 
 Le numéro de mission et le numéro de version sont indépendants.
-
-Une mission ne justifie pas automatiquement un changement de version.
 
 Règle générale :
 
 ```text
-0.1.x = consolidation du socle DB-first
-0.2.x = vrai nouveau palier fonctionnel
+0.1.x = évolution progressive du produit
+0.2.x = vrai nouveau palier décidé explicitement
 ```
 
 Ne pas passer à `0.2.0` sans décision explicite du mainteneur.
 
-Avant toute modification de version :
-
-- vérifier `README.md` ;
-- vérifier la version courante ;
-- expliquer la raison dans le rapport.
-
-La version est actuellement déclarée dans plusieurs endroits, notamment :
-
-- `package.json` ;
-- `package-lock.json` ;
-- le renderer / barre de statut.
-
-Tant qu’une source unique n’a pas été créée, vérifier leur cohérence.
+Ne pas modifier la version pour une consolidation purement interne si le comportement fonctionnel ne le justifie pas.
 
 ---
 
-## 10. Git : règle de reprise
+## 20. Pipeline TypeScript renderer
+
+Le renderer utilise :
+
+```text
+noEmit: true
+```
+
+Les sources `.ts/.tsx` doivent rester les seules sources applicatives dans `src/`.
+
+Aucun `.js` ou `.d.ts` généré adjacent ne doit réapparaître, à l’exception des déclarations source volontaires, notamment :
+
+```text
+src/types/electron.d.ts
+src/types/build.d.ts
+```
+
+Ne jamais modifier manuellement des artefacts générés.
+
+Si un build recrée des `.js/.d.ts` parasites dans `src/`, traiter cela comme une régression du pipeline.
+
+---
+
+## 21. Serveur de développement
+
+Vite utilise :
+
+```text
+port: 5173
+strictPort: true
+```
+
+`wait-on` et Electron utilisent le même port.
+
+Si `5173` est occupé :
+
+```text
+le démarrage doit échouer clairement
+```
+
+et ne jamais basculer silencieusement vers `5174`.
+
+Le lanceur :
+
+```text
+START_TEXTOTHEQUE.bat
+```
+
+effectue également un contrôle préalable du port.
+
+Ne pas tuer arbitrairement le propriétaire d’un port.
+
+---
+
+## 22. better-sqlite3 / Electron
+
+Le rebuild natif détecte automatiquement la version Electron réellement installée.
+
+Ne jamais réintroduire une cible Electron codée en dur.
+
+Commande :
+
+```powershell
+npm.cmd run rebuild:electron
+```
+
+Toujours vérifier ensuite :
+
+```powershell
+npm.cmd run test:electron-sqlite
+```
+
+Ne pas lancer :
+
+```text
+npm install
+npm update
+npm audit fix
+```
+
+ou modifier les dépendances sans nécessité explicite de mission.
+
+---
+
+## 23. Gestion des erreurs IPC
+
+Tous les handlers IPC `invoke` doivent passer par le mécanisme commun de journalisation/propagation.
+
+Règles :
+
+- détail technique dans les logs ;
+- message utilisateur simple ;
+- aucun `UnhandledPromiseRejection` ;
+- aucun faux succès UI ;
+- aucune mutation locale avant confirmation de la réussite distante lorsque cela compromettrait la cohérence.
+
+Le renderer utilise le helper commun de normalisation des erreurs.
+
+Une opération suivante réussie doit pouvoir effacer l’ancien message d’erreur pertinent.
+
+Test ciblé :
+
+```powershell
+npm.cmd run test:ipc-error
+```
+
+---
+
+## 24. Tests existants
+
+Commandes principales actuelles :
+
+```powershell
+npm.cmd run build
+npm.cmd run test:app-identity
+npm.cmd run test:legacy-migration
+npm.cmd run test:db
+npm.cmd run test:electron-sqlite
+npm.cmd run test:preload
+npm.cmd run test:ui-safeguards
+npm.cmd run test:ipc-error
+npm.cmd run test:library
+npm.cmd run test:library-history
+```
+
+### Rôle des principaux tests
+
+`test:app-identity`
+
+- identité Electron ;
+- `userData` ;
+- chemin DB par défaut ;
+- surcharge `TEXTOTHEQUE_DB_PATH`.
+
+`test:legacy-migration`
+
+- anciennes structures ;
+- `user_version` ;
+- adoption TEXO ;
+- préservation des données.
+
+`test:db`
+
+- documents ;
+- dossiers ;
+- corbeille ;
+- intégrité légère ;
+- timestamps.
+
+`test:electron-sqlite`
+
+- ABI Electron / `better-sqlite3`.
+
+`test:preload`
+
+- exposition de `window.textotheque` ;
+- rejets récupérables ;
+- API bibliothèque.
+
+`test:ui-safeguards`
+
+- parcours renderer ;
+- raccourcis ;
+- dirty state ;
+- navigation ;
+- panneaux ;
+- dialogues ;
+- erreurs forcées.
+
+`test:ipc-error`
+
+- vraie propagation SQLite → main → IPC → preload → renderer.
+
+`test:library`
+
+- identité ;
+- inspection ;
+- backup ;
+- ouverture ;
+- migration/adoption ;
+- bascule atomique.
+
+`test:library-history`
+
+- historique durable ;
+- création de bibliothèque ;
+- fallback startup ;
+- entrées introuvables ;
+- déduplication ;
+- absence de purge.
+
+---
+
+## 25. Tests UI : automatiser seulement ce qui doit rester vrai
+
+Ne pas sur-automatiser l’ergonomie.
+
+Automatiser :
+
+- états ;
+- transitions ;
+- raccourcis ;
+- persistance ;
+- erreurs ;
+- dirty state ;
+- masquage/affichage ;
+- invariants de navigation ;
+- responsive réellement critique.
+
+Laisser au mainteneur les vérifications humaines rapides :
+
+- esthétique ;
+- confort ;
+- densité ;
+- proportions ;
+- placement ;
+- wording ;
+- feeling général ;
+- rendu de menus/dialogues natifs.
+
+Principe :
+
+> automatiser ce qui doit rester vrai ; faire tester par l’humain ce qui doit être agréable.
+
+---
+
+## 26. Avertissements Electron Windows connus
+
+Certains tests Electron peuvent afficher :
+
+```text
+os_crypt_win.cc
+gpu_process_host.cc
+```
+
+Ils sont historiquement non bloquants lorsque :
+
+- le code de sortie est `0` ;
+- les assertions sont atteintes ;
+- le message final de succès est affiché.
+
+Ne pas ignorer une vraie exception ou un code non nul sous prétexte qu’Electron produit parfois du bruit.
+
+---
+
+## 27. Ressources temporaires de tests
+
+Tout test qui crée une ressource temporaire doit connaître précisément son chemin.
+
+Les helpers partagés créent des répertoires sous :
+
+```text
+%TEMP%\textotheque-test-*
+```
+
+Règles :
+
+- fermer SQLite avant suppression ;
+- attendre la fin des processus Electron propriétaires ;
+- nettoyer uniquement le répertoire créé par le test ;
+- vérifier sa disparition ;
+- nettoyer aussi après exception lorsque possible ;
+- ne jamais scanner `%TEMP%` pour supprimer par motif global.
+
+Les tests multi-bibliothèques et le registre de tests doivent rester entièrement sous ressources temporaires.
+
+Ne jamais utiliser :
+
+```text
+%APPDATA%\Textotheque\library-history.json
+```
+
+dans un test automatisé.
+
+---
+
+## 28. Données utilisateur
+
+Les bibliothèques réellement utilisées par le mainteneur sont désormais présumées **précieuses**.
+
+Les tests automatisés ne doivent jamais :
+
+- ouvrir la bibliothèque utilisateur réelle ;
+- modifier son registre réel ;
+- tester une migration dessus ;
+- supprimer ou recréer sa base ;
+- modifier un backup réel.
+
+Utiliser :
+
+- `TEXTOTHEQUE_DB_PATH` ;
+- chemins temporaires ;
+- registres temporaires ;
+- fixtures contrôlées.
+
+---
+
+## 29. Préférences UI
+
+Les préférences purement visuelles peuvent vivre dans `localStorage`.
+
+Clés actuelles importantes :
+
+```text
+textotheque:expanded-folders:v2
+textotheque:pane-layout:v2
+```
+
+Les anciennes clés peuvent rester présentes pour compatibilité historique, mais ne doivent pas redevenir la source principale.
+
+Ne pas stocker des données métier dans `localStorage`.
+
+SQLite reste la source de vérité pour les données métier.
+
+Le registre des bibliothèques est une préférence applicative du main process, pas du `localStorage`.
+
+---
+
+## 30. Périmètre fonctionnel actuel
+
+Fonctionnalités présentes notamment :
+
+- documents texte brut ;
+- création / édition / sauvegarde explicite ;
+- dirty state ;
+- confirmation anti-perte ;
+- recherche globale simple ;
+- barre de statut ;
+- raccourcis clavier ;
+- corbeille / restauration / vidage ;
+- dossiers virtuels et sous-dossiers ;
+- renommage ;
+- création contextualisée ;
+- arborescence repliable ;
+- panneaux redimensionnables et escamotables ;
+- identité TEXO ;
+- backup vérifié ;
+- ouverture de bibliothèques ;
+- migration/adoption avec accord ;
+- menu racine `Bibliothèque` ;
+- création d’une bibliothèque ;
+- registre durable des bibliothèques connues ;
+- réouverture de la dernière bibliothèque compatible.
+
+Fonctionnalités volontairement absentes ou reportées :
+
+- Markdown réel ;
+- texte enrichi ;
+- autosave ;
+- import/export documentaire ;
+- menu `Fichier` documentaire ;
+- tags ;
+- collections ;
+- drag and drop ;
+- déplacement de dossiers ;
+- suppression de dossiers ;
+- recherche FTS ;
+- historique documentaire ;
+- packaging ;
+- synchronisation/cloud ;
+- gestion manuelle avancée du registre de bibliothèques.
+
+Ne pas ajouter une fonctionnalité hors mission explicite.
+
+---
+
+## 31. UX : comportements à préserver
+
+Conserver sauf demande contraire :
+
+```text
+Ctrl+S → sauvegarde document
+Ctrl+N → nouveau document dans le contexte courant
+Ctrl+F → recherche globale
+Escape → annulation / sortie recherche selon contexte
+F2 → focus titre
+```
+
+Autres invariants :
+
+- document en corbeille en lecture seule ;
+- changement de document protégé si dirty ;
+- changement de bibliothèque protégé si dirty ;
+- backup bibliothèque refusé si document dirty ;
+- création dans un dossier depuis son contexte ;
+- document sélectionné visible dans l’arborescence ;
+- dossiers fermés par défaut hors chemin ouvert ;
+- panneaux latéraux masquables indépendamment ;
+- largeurs/visibilités de panneaux persistées ;
+- bibliothèque courante identifiable ;
+- opérations occasionnelles de bibliothèque dans le menu `Bibliothèque`.
+
+---
+
+## 32. Git : règle de travail
 
 Avant chaque mission :
 
@@ -316,11 +986,13 @@ Après la mission :
 ```powershell
 git status --short
 git diff --stat
+git diff --name-only
+git diff --check
 ```
 
 Ne jamais :
 
-- faire `git reset --hard` ;
+- `git reset --hard` ;
 - nettoyer le dépôt ;
 - supprimer des fichiers inconnus ;
 - réécrire l’historique ;
@@ -334,324 +1006,7 @@ Une mission doit préserver tout travail déjà présent dans le worktree.
 
 ---
 
-## 11. Fichiers générés TypeScript : dette connue
-
-Le projet possède actuellement une dette technique importante :
-
-des fichiers `.js` et `.d.ts` sont générés directement dans `src/`.
-
-Exemples historiques :
-
-```text
-src/App.js
-src/App.d.ts
-src/components/*.js
-src/components/*.d.ts
-src/services/*.js
-src/services/*.d.ts
-src/types/*.js
-src/types/*.d.ts
-```
-
-Ne jamais modifier manuellement ces fichiers générés.
-
-Attention : Vite peut résoudre `.js` avant `.ts` / `.tsx`, ce qui crée un risque qu’un `.js` périmé masque une source TypeScript plus récente en développement.
-
-Cette dette doit être corrigée dans une mission dédiée.
-
-Ne pas essayer de la régler discrètement pendant une autre mission.
-
----
-
-## 12. Développement Electron : port connu fragile
-
-Le développement utilise actuellement le port :
-
-```text
-5173
-```
-
-Le script Electron attend et charge explicitement ce port.
-
-Si Vite choisit automatiquement `5174` ou un autre port, Electron peut continuer d’attendre ou charger `5173`.
-
-Avant de conclure qu’une modification applicative est cassée, vérifier donc :
-
-- quel port Vite utilise réellement ;
-- si `5173` est déjà occupé ;
-- si un ancien processus dev tourne encore.
-
-La correction de cette fragilité doit être faite dans une mission dédiée.
-
----
-
-## 13. better-sqlite3 / Electron
-
-`better-sqlite3` nécessite un binaire compatible avec le runtime Electron.
-
-Le projet possède des scripts de rebuild et des smoke tests associés.
-
-Ne pas lancer :
-
-```text
-npm install
-npm audit fix
-npm update
-npm rebuild
-```
-
-ou modifier les versions de dépendances sans demande explicite ou nécessité de mission clairement justifiée.
-
-Le rebuild Electron a historiquement été nécessaire pour corriger un décalage ABI.
-
-Ne pas considérer un changement de dépendance comme anodin.
-
----
-
-## 14. Tests existants
-
-Commandes principales :
-
-```powershell
-npm.cmd run build
-npm.cmd run test:legacy-migration
-npm.cmd run test:db
-npm.cmd run test:electron-sqlite
-npm.cmd run test:preload
-npm.cmd run test:ui-safeguards
-```
-
-### Couverture approximative
-
-`test:legacy-migration`
-
-- bases anciennes ;
-- migrations ;
-- préservation des données ;
-- corbeille/restauration.
-
-`test:db`
-
-- comportements principaux de `TextothequeDatabase` ;
-- documents ;
-- dossiers ;
-- persistance ;
-- corbeille ;
-- restauration ;
-- vidage.
-
-`test:electron-sqlite`
-
-- chargement de `better-sqlite3` dans Electron.
-
-`test:preload`
-
-- exposition de `window.textotheque` ;
-- API preload / IPC.
-
-`test:ui-safeguards`
-
-- nombreux parcours renderer ;
-- recherche ;
-- dossiers ;
-- raccourcis ;
-- dirty state ;
-- dialogues ;
-- corbeille ;
-- panneaux ;
-- arborescence.
-
-### Limite importante
-
-`test:ui-safeguards` utilise des handlers IPC factices.
-
-Il ne remplace pas un vrai test :
-
-```text
-main + preload + renderer + SQLite
-```
-
-Ne pas surinterpréter son succès.
-
----
-
-## 15. Avertissements Electron Windows connus
-
-Certains tests Electron peuvent afficher des messages tels que :
-
-```text
-os_crypt_win.cc
-gpu_process_host.cc
-```
-
-Ils ont historiquement été non bloquants lorsque :
-
-- le code de sortie est `0` ;
-- les assertions du test sont atteintes ;
-- le message final de succès est affiché.
-
-Ne pas traiter automatiquement ces avertissements comme un échec.
-
-À l’inverse, ne pas ignorer une vraie exception ou un code de sortie non nul sous prétexte qu’Electron produit parfois du bruit.
-
----
-
-## 16. Tests : choix selon la mission
-
-Pour une petite modification très localisée, exécuter les tests pertinents.
-
-Pour une modification transversale touchant Electron, SQLite, preload, navigation ou modèle de données, exécuter les six validations principales.
-
-Toute migration SQLite doit au minimum inclure :
-
-```powershell
-npm.cmd run test:legacy-migration
-npm.cmd run test:db
-```
-
-Toute modification preload/IPC doit inclure :
-
-```powershell
-npm.cmd run test:preload
-```
-
-Toute modification UX importante doit inclure :
-
-```powershell
-npm.cmd run test:ui-safeguards
-```
-
-Toujours documenter précisément les commandes exécutées dans le rapport.
-
----
-
-## 17. Données de test
-
-Le projet est encore en phase de développement.
-
-Les données actuelles sont considérées comme données de test, mais cela ne justifie pas de modifier la base utilisateur sans nécessité.
-
-Pour les tests :
-
-- créer des bases temporaires ;
-- utiliser `TEXTOTHEQUE_DB_PATH` ;
-- éviter le profil utilisateur réel ;
-- ne pas demander de supprimer la base existante pour faire passer un test.
-
----
-
-## 18. Préférences UI
-
-Les préférences purement visuelles peuvent vivre dans `localStorage`.
-
-Clés connues :
-
-```text
-textotheque:pane-widths:v1
-textotheque:collapsed-folders:v1
-```
-
-Ne pas stocker des données métier dans `localStorage`.
-
-SQLite reste la source de vérité pour :
-
-- documents ;
-- dossiers ;
-- métadonnées métier ;
-- corbeille.
-
----
-
-## 19. Périmètre fonctionnel actuel
-
-Fonctionnalités présentes :
-
-- documents texte brut ;
-- création ;
-- édition ;
-- sauvegarde explicite ;
-- dirty state ;
-- confirmation anti-perte ;
-- recherche simple ;
-- barre de statut ;
-- raccourcis clavier ;
-- corbeille ;
-- restauration ;
-- vidage de corbeille ;
-- dossiers virtuels ;
-- sous-dossiers ;
-- renommage ;
-- création contextualisée ;
-- documents dans l’arborescence ;
-- repli/dépli ;
-- panneaux redimensionnables ;
-- métadonnées simples.
-
-Fonctionnalités volontairement absentes ou reportées :
-
-- Markdown réel ;
-- texte enrichi ;
-- autosave ;
-- import/export ;
-- tags ;
-- collections ;
-- drag and drop ;
-- déplacement de dossiers ;
-- suppression de dossiers ;
-- recherche FTS ;
-- historique documentaire ;
-- packaging ;
-- IA.
-
-Ne pas ajouter une de ces fonctionnalités hors mission explicite.
-
----
-
-## 20. UX : préserver les comportements existants
-
-Les comportements suivants sont déjà établis et doivent être conservés sauf demande contraire :
-
-- `Ctrl+S` : sauvegarde ;
-- `Ctrl+N` : nouveau document avec contexte courant ;
-- `Ctrl+F` : recherche ;
-- `Escape` : annulation de dialogue / effacement recherche selon contexte ;
-- `F2` : focus titre ;
-- documents en corbeille en lecture seule ;
-- changement de document protégé si modifications non sauvegardées ;
-- création dans un dossier depuis son contexte ;
-- document sélectionné visible dans l’arborescence ;
-- dossiers repliés persistés localement.
-
----
-
-## 21. Gestion des erreurs
-
-La gestion des erreurs IPC est actuellement inégale.
-
-La sauvegarde possède une gestion plus complète que plusieurs autres actions.
-
-Lors d’une mission concernant :
-
-- création ;
-- chargement ;
-- dossiers ;
-- renommage ;
-- corbeille ;
-- restauration ;
-- IPC ;
-
-ne pas masquer une erreur.
-
-Ne pas ajouter une refonte globale de la gestion d’erreurs hors mission dédiée.
-
-Si une erreur existante est découverte hors périmètre :
-
-- la documenter ;
-- ne la corriger que si elle bloque directement la mission.
-
----
-
-## 22. Rapports de mission
+## 33. Rapports de mission
 
 Chaque mission doit produire un rapport Markdown dans :
 
@@ -682,6 +1037,8 @@ Le rapport doit contenir au minimum :
 
 ## Commandes lancées
 
+## Versionnement
+
 ## Points non traités
 
 ## Risques / limites
@@ -689,7 +1046,7 @@ Le rapport doit contenir au minimum :
 ## Suite recommandée
 ```
 
-Pour une correction de bug, ajouter :
+Pour une correction de bug :
 
 ```markdown
 ## Symptôme initial
@@ -705,9 +1062,18 @@ Pour une migration :
 ## Compatibilité legacy
 ```
 
+Pour une mission bibliothèque :
+
+```markdown
+## Inspection
+## Backup / migration
+## Atomicité de la bascule
+## Ressources temporaires
+```
+
 ---
 
-## 23. Fin de mission
+## 34. Fin de mission
 
 Avant de déclarer une mission terminée :
 
@@ -715,41 +1081,39 @@ Avant de déclarer une mission terminée :
 2. exécuter les tests appropriés ;
 3. vérifier les codes de sortie ;
 4. relever les avertissements connus ;
-5. exécuter :
-
-```powershell
-git status --short
-git diff --stat
-```
-
+5. exécuter les contrôles Git finaux ;
 6. vérifier qu’aucun fichier hors périmètre n’a été modifié accidentellement ;
-7. créer le rapport ;
-8. ne pas committer automatiquement ;
-9. ne pas modifier la version si cela n’était pas nécessaire.
+7. vérifier qu’aucune donnée utilisateur réelle n’a été utilisée par les tests ;
+8. créer le rapport ;
+9. ne pas committer automatiquement ;
+10. ne pas modifier la version si cela n’était pas nécessaire.
 
 ---
 
-## 24. Documents de référence prioritaires
+## 35. Documents de référence prioritaires
 
 Ordre recommandé :
 
 ```text
 README.md
 AGENTS.md
-reports/015_project_state_audit.md
+docs/DB_ROADMAP.md       si la mission touche aux bibliothèques
 rapports récents liés à la mission
+reports/015_project_state_audit.md pour contexte historique
 code réel
 ```
 
 Le README décrit aussi une vision cible.
 
-Le rapport 015 décrit l’état réel observé à la reprise du 15 août 2026.
+`docs/DB_ROADMAP.md` décrit le contrat durable des bibliothèques SQLite.
 
-Le code reste la vérité finale si une divergence existe.
+Les rapports décrivent l’histoire des choix.
+
+Le code reste la vérité finale.
 
 ---
 
-## 25. Règle finale
+## 36. Règle finale
 
 Textothèque n’a pas besoin d’être réinventée à chaque mission.
 
@@ -757,4 +1121,4 @@ Elle doit être améliorée progressivement.
 
 Avant d’ajouter quelque chose :
 
-> comprendre l’existant, préserver ce qui fonctionne, modifier le minimum nécessaire, tester, documenter.
+> comprendre l’existant, préserver ce qui fonctionne, modifier le minimum nécessaire, tester ce qui doit rester vrai, puis laisser l’humain juger ce qui doit être agréable.
