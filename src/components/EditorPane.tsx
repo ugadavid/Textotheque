@@ -9,10 +9,14 @@ interface EditorPaneProps {
   error: string | null;
   isDeleted: boolean;
   searchQuery: string;
+  navigationVisible: boolean;
+  metadataVisible: boolean;
   onTitleChange: (value: string) => void;
   onContentChange: (value: string) => void;
   onSearchChange: (value: string) => void;
   onClearSearch: () => void;
+  onToggleNavigation: () => void;
+  onToggleMetadata: () => void;
   onSave: () => void;
   onTrash: () => void;
   onRestore: () => void;
@@ -35,10 +39,14 @@ export default function EditorPane({
   error,
   isDeleted,
   searchQuery,
+  navigationVisible,
+  metadataVisible,
   onTitleChange,
   onContentChange,
   onSearchChange,
   onClearSearch,
+  onToggleNavigation,
+  onToggleMetadata,
   onSave,
   onTrash,
   onRestore,
@@ -46,6 +54,16 @@ export default function EditorPane({
   return (
     <section className="pane editor-pane">
       <header className="editor-toolbar">
+        <button
+          className={navigationVisible ? 'pane-toggle-button toggle-navigation-button active' : 'pane-toggle-button toggle-navigation-button'}
+          type="button"
+          onClick={onToggleNavigation}
+          title={navigationVisible ? 'Masquer la navigation' : 'Afficher la navigation'}
+          aria-label={navigationVisible ? 'Masquer la navigation' : 'Afficher la navigation'}
+          aria-pressed={navigationVisible}
+        >
+          <span className="navigation-toggle-icon" aria-hidden="true" />
+        </button>
         <div className="title-row">
           {document ? <>
             {isDirty ? <span className="title-dirty-marker" aria-label="Modifications non sauvegardees">*</span> : null}
@@ -62,7 +80,8 @@ export default function EditorPane({
         <div className="toolbar-search search-input-row">
           <span className="search-icon" aria-hidden="true">⌕</span>
           <input
-            type="search"
+            type="text"
+            inputMode="search"
             value={searchQuery}
             onChange={(event) => onSearchChange(event.target.value)}
             placeholder="Rechercher dans Textothèque..."
@@ -94,6 +113,16 @@ export default function EditorPane({
             </>
           )}
         </div> : <div className="save-controls toolbar-empty-actions" />}
+        <button
+          className={metadataVisible ? 'pane-toggle-button toggle-metadata-button active' : 'pane-toggle-button toggle-metadata-button'}
+          type="button"
+          onClick={onToggleMetadata}
+          title={metadataVisible ? 'Masquer les métadonnées' : 'Afficher les métadonnées'}
+          aria-label={metadataVisible ? 'Masquer les métadonnées' : 'Afficher les métadonnées'}
+          aria-pressed={metadataVisible}
+        >
+          <span className="metadata-toggle-icon" aria-hidden="true" />
+        </button>
       </header>
 
       {error ? <p className="error-message">{error}</p> : null}

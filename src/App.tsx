@@ -33,12 +33,15 @@ type DocumentView = 'navigation' | 'all' | 'unfiled' | 'folder' | 'trash';
 
 const UNSAVED_CHANGES_MESSAGE =
   'Ce document contient des modifications non sauvegardees. Voulez-vous vraiment continuer sans sauvegarder ?';
-const PANE_STORAGE_KEY = 'textotheque:pane-widths:v1';
+const LEGACY_PANE_STORAGE_KEY = 'textotheque:pane-widths:v1';
+const PANE_LAYOUT_STORAGE_KEY = 'textotheque:pane-layout:v2';
 const UNTITLED_FALLBACK = 'Sans titre';
 
-interface PaneWidths {
+interface PaneLayout {
   left: number;
   right: number;
+  leftVisible: boolean;
+  rightVisible: boolean;
 }
 
 interface ConfirmDialogState {
@@ -54,24 +57,40 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function loadPaneWidths(): PaneWidths {
-  const fallback = { left: 22, right: 24 };
+function loadPaneLayout(): PaneLayout {
+  const fallback = { left: 22, right: 24, leftVisible: true, rightVisible: true };
 
   try {
-    const stored = window.localStorage.getItem(PANE_STORAGE_KEY);
-    if (!stored) {
-      return fallback;
+    const storedLayout = window.localStorage.getItem(PANE_LAYOUT_STORAGE_KEY);
+    if (storedLayout) {
+      const parsed = JSON.parse(storedLayout) as Partial<PaneLayout>;
+      if (
+        typeof parsed.left === 'number' &&
+        typeof parsed.right === 'number' &&
+        typeof parsed.leftVisible === 'boolean' &&
+        typeof parsed.rightVisible === 'boolean'
+      ) {
+        return {
+          left: clamp(parsed.left, 8, 34),
+          right: clamp(parsed.right, 8, 34),
+          leftVisible: parsed.leftVisible,
+          rightVisible: parsed.rightVisible,
+        };
+      }
     }
 
-    const parsed = JSON.parse(stored) as Partial<PaneWidths>;
-    if (typeof parsed.left !== 'number' || typeof parsed.right !== 'number') {
-      return fallback;
+    const legacyWidths = window.localStorage.getItem(LEGACY_PANE_STORAGE_KEY);
+    if (legacyWidths) {
+      const parsed = JSON.parse(legacyWidths) as Partial<PaneLayout>;
+      if (typeof parsed.left === 'number' && typeof parsed.right === 'number') {
+        return {
+          ...fallback,
+          left: clamp(parsed.left, 8, 34),
+          right: clamp(parsed.right, 8, 34),
+        };
+      }
     }
-
-    return {
-      left: clamp(parsed.left, 18, 34),
-      right: clamp(parsed.right, 18, 34),
-    };
+    return fallback;
   } catch {
     return fallback;
   }
@@ -97,11 +116,12 @@ export default function App() {
   const [folderId, setFolderId] = useState<number | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [error, setError] = useState<string | null>(null);
-  const [paneWidths, setPaneWidths] = useState<PaneWidths>(() => loadPaneWidths());
+  const [paneLayout, setPaneLayout] = useState<PaneLayout>(() => loadPaneLayout());
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const shellRef = useRef<HTMLElement | null>(null);
   const isDirtyRef = useRef(false);
+  const restoreHiddenNavigationAfterSearchRef = useRef(false);
 
   useEffect(() => {
     void refreshDocuments().catch((loadError: unknown) => {
@@ -183,8 +203,8 @@ export default function App() {
   }, [isDirty]);
 
   useEffect(() => {
-    window.localStorage.setItem(PANE_STORAGE_KEY, JSON.stringify(paneWidths));
-  }, [paneWidths]);
+    window.localStorage.setItem(PANE_LAYOUT_STORAGE_KEY, JSON.stringify(paneLayout));
+  }, [paneLayout]);
 
   const focusEditor = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -193,6 +213,13 @@ export default function App() {
   }, []);
 
   const focusSearch = useCallback(() => {
+    setPaneLayout((current) => {
+      if (current.leftVisible) {
+        return current;
+      }
+      restoreHiddenNavigationAfterSearchRef.current = true;
+      return { ...current, leftVisible: true };
+    });
     window.requestAnimationFrame(() => {
       const searchInput = document.querySelector<HTMLInputElement>('.search-input-row input');
       searchInput?.focus();
@@ -636,17 +663,45 @@ export default function App() {
     if (!selectedDocument || selectedDocument.deleted_at) {
       setDocumentView('navigation');
       setSelectedFolderId(null);
-      return;
-    }
-
-    if (selectedDocument.folder_id === null) {
+    } else if (selectedDocument.folder_id === null) {
       setDocumentView('unfiled');
       setSelectedFolderId(null);
+    } else {
+      setDocumentView('folder');
+      setSelectedFolderId(selectedDocument.folder_id);
+    }
+
+    if (restoreHiddenNavigationAfterSearchRef.current) {
+      restoreHiddenNavigationAfterSearchRef.current = false;
+      setPaneLayout((current) => ({ ...current, leftVisible: false }));
+    }
+  }
+
+  function handleSearchChange(value: string) {
+    if (!value.trim() && searchQuery.trim() && restoreHiddenNavigationAfterSearchRef.current) {
+      clearSearchAndReturnToNavigation();
       return;
     }
 
-    setDocumentView('folder');
-    setSelectedFolderId(selectedDocument.folder_id);
+    setSearchQuery(value);
+    if (value.trim()) {
+      setPaneLayout((current) => {
+        if (current.leftVisible) {
+          return current;
+        }
+        restoreHiddenNavigationAfterSearchRef.current = true;
+        return { ...current, leftVisible: true };
+      });
+    }
+  }
+
+  function toggleNavigationPane() {
+    restoreHiddenNavigationAfterSearchRef.current = false;
+    setPaneLayout((current) => ({ ...current, leftVisible: !current.leftVisible }));
+  }
+
+  function toggleMetadataPane() {
+    setPaneLayout((current) => ({ ...current, rightVisible: !current.rightVisible }));
   }
 
   useEffect(() => {
@@ -717,16 +772,16 @@ export default function App() {
         return;
       }
 
-      setPaneWidths((current) => {
+      setPaneLayout((current) => {
         if (target === 'left') {
-          const nextLeft = clamp(((pointerMoveEvent.clientX - rect.left) / totalWidth) * 100, 18, 34);
-          const maxLeft = 64 - current.right;
-          return { ...current, left: clamp(nextLeft, 18, maxLeft) };
+          const nextLeft = clamp(((pointerMoveEvent.clientX - rect.left) / totalWidth) * 100, 8, 34);
+          const maxLeft = current.rightVisible ? 68 - current.right : 34;
+          return { ...current, left: clamp(nextLeft, 8, maxLeft) };
         }
 
-        const nextRight = clamp(((rect.right - pointerMoveEvent.clientX) / totalWidth) * 100, 18, 34);
-        const maxRight = 64 - current.left;
-        return { ...current, right: clamp(nextRight, 18, maxRight) };
+        const nextRight = clamp(((rect.right - pointerMoveEvent.clientX) / totalWidth) * 100, 8, 34);
+        const maxRight = current.leftVisible ? 68 - current.left : 34;
+        return { ...current, right: clamp(nextRight, 8, maxRight) };
       });
     }
 
@@ -748,12 +803,14 @@ export default function App() {
         ref={shellRef}
         style={
           {
-            '--left-pane-width': `${paneWidths.left}%`,
-            '--right-pane-width': `${paneWidths.right}%`,
+            '--left-pane-track': paneLayout.leftVisible ? `minmax(76px, ${paneLayout.left}%)` : '0px',
+            '--right-pane-track': paneLayout.rightVisible ? `minmax(84px, ${paneLayout.right}%)` : '0px',
+            '--left-handle-width': paneLayout.leftVisible ? '6px' : '0px',
+            '--right-handle-width': paneLayout.rightVisible ? '6px' : '0px',
           } as CSSProperties
         }
       >
-        <NavigationPane
+        {paneLayout.leftVisible ? <NavigationPane
           searchResults={visibleDocuments}
           allDocuments={documents}
           deletedDocuments={deletedDocuments}
@@ -773,13 +830,13 @@ export default function App() {
           onRenameFolder={handleRenameFolder}
           onSelectDocument={handleSelectDocument}
           onEmptyTrash={handleEmptyTrash}
-        />
-        <button
-          className="resize-handle"
+        /> : null}
+        {paneLayout.leftVisible ? <button
+          className="resize-handle left-resize-handle"
           type="button"
           aria-label="Redimensionner le volet gauche"
           onPointerDown={(event) => startPaneResize('left', event)}
-        />
+        /> : null}
         <EditorPane
           document={selectedDocument}
           title={title}
@@ -797,19 +854,23 @@ export default function App() {
             setContent(value);
             markDirty();
           }}
-          onSearchChange={setSearchQuery}
+          navigationVisible={paneLayout.leftVisible}
+          metadataVisible={paneLayout.rightVisible}
+          onToggleNavigation={toggleNavigationPane}
+          onToggleMetadata={toggleMetadataPane}
+          onSearchChange={handleSearchChange}
           onClearSearch={clearSearchAndReturnToNavigation}
           onSave={handleSave}
           onTrash={handleTrashCurrentDocument}
           onRestore={handleRestoreCurrentDocument}
         />
-        <button
-          className="resize-handle"
+        {paneLayout.rightVisible ? <button
+          className="resize-handle right-resize-handle"
           type="button"
           aria-label="Redimensionner le volet droit"
           onPointerDown={(event) => startPaneResize('right', event)}
-        />
-        <MetadataPane
+        /> : null}
+        {paneLayout.rightVisible ? <MetadataPane
           document={selectedDocument}
           folders={folders}
           notes={notes}
@@ -835,7 +896,7 @@ export default function App() {
             setFolderId(value);
             markDirty();
           }}
-        />
+        /> : null}
       </main>
       <StatusBar
         totalDocuments={currentDocuments.length}

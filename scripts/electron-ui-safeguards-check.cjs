@@ -311,14 +311,80 @@ app
         }
         const viewButtons = document.querySelectorAll('.nav-view-button');
         if (viewButtons.length !== 2) throw new Error('document view buttons missing');
-        if (expectedAppVersion !== '0.1.14') throw new Error('unexpected application version');
+        if (expectedAppVersion !== '0.1.15') throw new Error('unexpected application version');
         const initialExpandedState = JSON.parse(window.localStorage.getItem('textotheque:expanded-folders:v2') ?? '[]');
         if (initialExpandedState.length !== 0) throw new Error('folders should be closed by default');
+        await waitFor(() => window.localStorage.getItem('textotheque:pane-layout:v2'), 'pane layout stored');
+        const initialPaneLayout = JSON.parse(window.localStorage.getItem('textotheque:pane-layout:v2'));
+        if (!initialPaneLayout.leftVisible || !initialPaneLayout.rightVisible) {
+          throw new Error('both side panels should be visible by default');
+        }
+        if (document.querySelectorAll('.resize-handle').length !== 2) {
+          throw new Error('both resize handles should be visible initially');
+        }
+
+        const shellRect = document.querySelector('.app-shell').getBoundingClientRect();
+        const leftHandle = document.querySelector('.left-resize-handle');
+        leftHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, buttons: 1, clientX: leftHandle.getBoundingClientRect().left }));
+        window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 1, clientX: shellRect.left + shellRect.width * 0.09 }));
+        window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: shellRect.left + shellRect.width * 0.09 }));
+        await waitFor(() => JSON.parse(window.localStorage.getItem('textotheque:pane-layout:v2')).left <= 10, 'compact left pane width stored');
+
+        const rightHandle = document.querySelector('.right-resize-handle');
+        rightHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, buttons: 1, clientX: rightHandle.getBoundingClientRect().left }));
+        window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, buttons: 1, clientX: shellRect.right - shellRect.width * 0.09 }));
+        window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: shellRect.right - shellRect.width * 0.09 }));
+        await waitFor(() => JSON.parse(window.localStorage.getItem('textotheque:pane-layout:v2')).right <= 10, 'compact right pane width stored');
+
+        const compactLayout = JSON.parse(window.localStorage.getItem('textotheque:pane-layout:v2'));
+        const leftWidthBeforeHide = document.querySelector('.navigation-pane').getBoundingClientRect().width;
+        const editorWidthWithBothPanels = document.querySelector('.editor-pane').getBoundingClientRect().width;
+        document.querySelector('.toggle-navigation-button').click();
+        await waitFor(() => !document.querySelector('.navigation-pane'), 'left pane hidden');
+        if (document.querySelector('.left-resize-handle') || !document.querySelector('.metadata-pane')) {
+          throw new Error('left pane hide should remove only its handle and pane');
+        }
+        if (document.querySelector('.editor-pane').getBoundingClientRect().width <= editorWidthWithBothPanels) {
+          throw new Error('editor did not recover space from hidden left pane');
+        }
+        document.querySelector('.toggle-navigation-button').click();
+        await waitFor(() => document.querySelector('.navigation-pane'), 'left pane reopened');
+        if (Math.abs(document.querySelector('.navigation-pane').getBoundingClientRect().width - leftWidthBeforeHide) > 3) {
+          throw new Error('left pane width was not restored');
+        }
+
+        document.querySelector('.toggle-metadata-button').click();
+        await waitFor(() => !document.querySelector('.metadata-pane'), 'right pane hidden');
+        if (document.querySelector('.right-resize-handle') || !document.querySelector('.navigation-pane')) {
+          throw new Error('right pane hide should remove only its handle and pane');
+        }
+        document.querySelector('.toggle-navigation-button').click();
+        await waitFor(() => !document.querySelector('.navigation-pane'), 'both panes hidden');
+        if (document.querySelectorAll('.resize-handle').length !== 0) {
+          throw new Error('hidden panels should not leave resize handles');
+        }
+        if (document.querySelector('.editor-pane').getBoundingClientRect().width < shellRect.width * 0.95) {
+          throw new Error('editor should use almost the full width when both panes are hidden');
+        }
+        const statusWhilePanelsHidden = document.querySelector('.status-bar').getBoundingClientRect();
+        if (statusWhilePanelsHidden.bottom > window.innerHeight + 1 || statusWhilePanelsHidden.height <= 0) {
+          throw new Error('status bar should remain visible when both panels are hidden');
+        }
+        document.querySelector('.toggle-navigation-button').click();
+        document.querySelector('.toggle-metadata-button').click();
+        await waitFor(() => document.querySelector('.navigation-pane') && document.querySelector('.metadata-pane'), 'both panes reopened');
+        const reopenedLayout = JSON.parse(window.localStorage.getItem('textotheque:pane-layout:v2'));
+        if (reopenedLayout.left !== compactLayout.left || reopenedLayout.right !== compactLayout.right) {
+          throw new Error('pane toggles should preserve compact widths');
+        }
 
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
           .set.call(searchInput, 'ancien');
         searchInput.dispatchEvent(new Event('input', { bubbles: true }));
         await waitFor(() => document.querySelectorAll('.document-item').length === 0, 'active search excludes trash');
+        if (searchInput.type !== 'text' || document.querySelectorAll('.clear-search-button').length !== 1) {
+          throw new Error('search should expose exactly one custom clear control');
+        }
 
         document.querySelector('.clear-search-button').click();
         await waitFor(() => document.querySelector('.folder-section'), 'clear search returns to navigation');
@@ -347,9 +413,18 @@ app
         clickView('Tous les textes');
         await waitFor(() => document.querySelectorAll('.document-item').length >= 2, 'all documents restored');
 
+        document.querySelector('.toggle-navigation-button').click();
+        await waitFor(() => !document.querySelector('.navigation-pane'), 'navigation hidden before Ctrl+F');
+        document.querySelector('.toggle-metadata-button').click();
+        await waitFor(() => !document.querySelector('.metadata-pane'), 'both panels hidden before Ctrl+F');
+        const selectedTitleBeforeHiddenSearch = document.querySelector('.title-input')?.value;
         const ctrlFResult = dispatchShortcut('f', { ctrlKey: true });
         if (!ctrlFResult.defaultPrevented || ctrlFResult.dispatchResult !== false) {
           throw new Error('Ctrl+F did not prevent native search');
+        }
+        await waitFor(() => document.querySelector('.navigation-pane'), 'Ctrl+F reveals hidden navigation');
+        if (document.querySelector('.metadata-pane')) {
+          throw new Error('Ctrl+F should not reveal the metadata pane');
         }
         await waitFor(() => document.activeElement === document.querySelector('.search-input-row input'), 'Ctrl+F focuses search');
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
@@ -358,7 +433,13 @@ app
         await waitFor(() => document.querySelector('.search-input-row input').value === 'ancien', 'search text entered before escape');
         dispatchShortcut('Escape');
         await waitFor(() => document.querySelector('.search-input-row input').value === '', 'Escape clears focused search');
-        await waitFor(() => document.querySelector('.folder-section'), 'Escape returns to navigation');
+        await waitFor(() => !document.querySelector('.navigation-pane'), 'Escape restores temporarily hidden navigation state');
+        if (document.querySelector('.title-input')?.value !== selectedTitleBeforeHiddenSearch) {
+          throw new Error('hidden navigation search changed the selected document');
+        }
+        document.querySelector('.toggle-navigation-button').click();
+        document.querySelector('.toggle-metadata-button').click();
+        await waitFor(() => document.querySelector('.folder-section') && document.querySelector('.metadata-pane'), 'panels reopened after hidden search');
 
         document.querySelector('.folder-actions button[title="Nouveau dossier racine"]').click();
         await waitFor(() => document.querySelector('.folder-button')?.textContent.includes('Nouveau dossier'), 'folder created');
@@ -529,6 +610,26 @@ app
         editor.dispatchEvent(new Event('input', { bubbles: true }));
         await waitFor(() => document.querySelector('.title-dirty-marker'), 'dirty marker visible');
         await waitFor(() => document.querySelector('.status-bar')?.textContent.includes('Modifie'), 'status dirty state');
+        const dirtyTitleBeforeToggle = document.querySelector('.title-input').value;
+        document.querySelector('.toggle-navigation-button').click();
+        await waitFor(() => !document.querySelector('.navigation-pane'), 'left pane hidden with dirty document');
+        if (!document.querySelector('.title-dirty-marker') || document.querySelector('.title-input').value !== dirtyTitleBeforeToggle) {
+          throw new Error('left pane toggle lost selection or dirty state');
+        }
+        document.querySelector('.toggle-navigation-button').click();
+        await waitFor(() => document.querySelector('.navigation-pane'), 'left pane restored with dirty document');
+
+        const notesBeforeToggle = 'Note conservee pendant le masquage';
+        const notesEditor = document.querySelector('.notes-editor');
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(notesEditor, notesBeforeToggle);
+        notesEditor.dispatchEvent(new Event('input', { bubbles: true }));
+        document.querySelector('.toggle-metadata-button').click();
+        await waitFor(() => !document.querySelector('.metadata-pane'), 'right pane hidden with edited metadata');
+        document.querySelector('.toggle-metadata-button').click();
+        await waitFor(() => document.querySelector('.notes-editor'), 'right pane restored with edited metadata');
+        if (document.querySelector('.notes-editor').value !== notesBeforeToggle || !document.querySelector('.title-dirty-marker')) {
+          throw new Error('right pane toggle lost metadata or dirty state');
+        }
         dispatchShortcut('n', { ctrlKey: true });
         await waitFor(() => document.querySelector('.confirm-dialog'), 'Ctrl+N respects dirty confirmation');
         dispatchShortcut('Escape');
@@ -673,12 +774,8 @@ app
         }
         await waitFor(() => document.querySelector('.status-bar')?.textContent.includes('0 documents'), 'trash status count after empty');
 
-        const handles = document.querySelectorAll('.resize-handle');
-        if (handles.length !== 2) throw new Error('resize handles missing');
-        handles[0].dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, clientX: 280 }));
-        window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 340 }));
-        window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, clientX: 340 }));
-        await waitFor(() => window.localStorage.getItem('textotheque:pane-widths:v1'), 'pane widths stored');
+        if (document.querySelectorAll('.resize-handle').length !== 2) throw new Error('resize handles missing');
+        await waitFor(() => window.localStorage.getItem('textotheque:pane-layout:v2'), 'pane layout remains stored');
         const statusRect = document.querySelector('.status-bar').getBoundingClientRect();
         if (statusRect.bottom > window.innerHeight + 1 || statusRect.height <= 0) {
           throw new Error(
@@ -706,12 +803,59 @@ app
         document.querySelector('.primary-button').click();
         await waitFor(() => !document.querySelector('.title-dirty-marker'), 'new title saved');
 
-        return { ok: true };
+        document.querySelector('.toggle-metadata-button').click();
+        await waitFor(() => !document.querySelector('.metadata-pane'), 'right pane hidden before reload');
+        await waitFor(
+          () => JSON.parse(window.localStorage.getItem('textotheque:pane-layout:v2')).rightVisible === false,
+          'hidden right pane persisted before reload'
+        );
+        return {
+          ok: true,
+          paneLayoutBeforeReload: JSON.parse(window.localStorage.getItem('textotheque:pane-layout:v2')),
+        };
       })().catch((error) => ({ ok: false, errorStack: error.stack }))
     `);
 
     if (!result.ok) {
       throw new Error(`UI safeguards check failed: ${result.errorStack ?? 'unknown error'}`);
+    }
+
+    await new Promise((resolve) => {
+      window.webContents.once('did-finish-load', resolve);
+      window.webContents.reload();
+    });
+
+    const panePersistenceResult = await window.webContents.executeJavaScript(`
+      (async () => {
+        const waitFor = async (predicate, label) => {
+          const start = Date.now();
+          while (Date.now() - start < 3000) {
+            const value = predicate();
+            if (value) return value;
+            await new Promise((resolve) => setTimeout(resolve, 30));
+          }
+          throw new Error('Timeout: ' + label);
+        };
+        await waitFor(() => document.querySelector('.title-input'), 'application restored after reload');
+        const layout = JSON.parse(window.localStorage.getItem('textotheque:pane-layout:v2'));
+        if (
+          layout.left !== ${JSON.stringify(result.paneLayoutBeforeReload.left)} ||
+          layout.right !== ${JSON.stringify(result.paneLayoutBeforeReload.right)} ||
+          layout.leftVisible !== true ||
+          layout.rightVisible !== false
+        ) {
+          return { ok: false, message: 'pane layout did not survive reload', layout };
+        }
+        if (!document.querySelector('.navigation-pane') || document.querySelector('.metadata-pane')) {
+          return { ok: false, message: 'pane visibility did not survive reload', layout };
+        }
+        document.querySelector('.toggle-metadata-button').click();
+        await waitFor(() => document.querySelector('.metadata-pane'), 'metadata pane reopened after reload');
+        return { ok: true };
+      })().catch((error) => ({ ok: false, message: error.stack }))
+    `);
+    if (!panePersistenceResult.ok) {
+      throw new Error(`Pane persistence check failed: ${panePersistenceResult.message}; ${JSON.stringify(panePersistenceResult.layout)}`);
     }
 
     forceFailures('documents:create');
