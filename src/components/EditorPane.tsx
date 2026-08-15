@@ -42,6 +42,7 @@ export default function EditorPane({
       <section className="pane editor-pane empty-editor">
         <h2>Aucun document selectionne</h2>
         <p>Creez un premier texte depuis le volet gauche.</p>
+        {error ? <p className="error-message">{error}</p> : null}
       </section>
     );
   }

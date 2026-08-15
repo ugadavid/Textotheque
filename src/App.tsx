@@ -24,6 +24,7 @@ import {
   selectDocument,
   trashDocument,
 } from './services/documents';
+import { getErrorMessage, logRendererError } from './services/errors';
 import type { DocumentStatus, Folder, TextDocument } from './types/document';
 
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
@@ -103,7 +104,9 @@ export default function App() {
   const isDirtyRef = useRef(false);
 
   useEffect(() => {
-    void refreshDocuments();
+    void refreshDocuments().catch((loadError: unknown) => {
+      showOperationError('initial-load', loadError, 'Impossible de charger les documents et les dossiers.');
+    });
   }, []);
 
   const characterCount = content.length;
@@ -172,7 +175,8 @@ export default function App() {
         folderId !== selectedDocument.folder_id ||
         favorite !== (selectedDocument.favorite === 1))
   );
-  const displayedSaveState: SaveState = isDirty ? 'dirty' : saveState;
+  const displayedSaveState: SaveState =
+    saveState === 'saving' || saveState === 'error' ? saveState : isDirty ? 'dirty' : saveState;
 
   useEffect(() => {
     isDirtyRef.current = isDirty;
@@ -203,6 +207,11 @@ export default function App() {
       titleInput?.select();
     });
   }, []);
+
+  function showOperationError(operation: string, operationError: unknown, fallback: string): void {
+    logRendererError(operation, operationError);
+    setError(getErrorMessage(operationError, fallback));
+  }
 
   const confirmAction = useCallback(
     async (dialog: Omit<ConfirmDialogState, 'resolve'>) =>
@@ -259,10 +268,17 @@ export default function App() {
   }
 
   useEffect(() => {
-    const removeCloseListener = window.textotheque.onCloseRequested(async () => {
-      if (await confirmDiscardUnsavedChanges()) {
-        void window.textotheque.approveClose();
-      }
+    const removeCloseListener = window.textotheque.onCloseRequested(() => {
+      void (async () => {
+        try {
+          if (await confirmDiscardUnsavedChanges()) {
+            setError(null);
+            await window.textotheque.approveClose();
+          }
+        } catch (closeError: unknown) {
+          showOperationError('approve-close', closeError, "Impossible de fermer l'application.");
+        }
+      })();
     });
 
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -360,10 +376,14 @@ export default function App() {
       return;
     }
 
-    setDocumentView(nextView);
-    setSelectedFolderId(nextFolderId);
     setError(null);
-    await refreshDocuments(undefined, nextView, nextFolderId);
+    try {
+      await refreshDocuments(undefined, nextView, nextFolderId);
+      setDocumentView(nextView);
+      setSelectedFolderId(nextFolderId);
+    } catch (loadError: unknown) {
+      showOperationError('change-view', loadError, 'Impossible de charger cette vue.');
+    }
   }
 
   async function handleCreateDocument() {
@@ -379,11 +399,23 @@ export default function App() {
           : null;
     const targetView = targetFolderId === null ? 'all' : 'folder';
 
-    setDocumentView(targetView);
-    setSelectedFolderId(targetFolderId);
     setError(null);
-    const document = await createDocument(targetFolderId);
-    await refreshDocuments(document.id, targetView, targetFolderId);
+    let document: TextDocument;
+    try {
+      document = await createDocument(targetFolderId);
+    } catch (createError: unknown) {
+      showOperationError('create-document', createError, 'Impossible de creer le document.');
+      return;
+    }
+
+    try {
+      await refreshDocuments(document.id, targetView, targetFolderId);
+      setDocumentView(targetView);
+      setSelectedFolderId(targetFolderId);
+    } catch (loadError: unknown) {
+      showOperationError('refresh-after-create-document', loadError, 'Document cree, mais actualisation impossible.');
+      return;
+    }
     focusEditor();
   }
 
@@ -393,17 +425,37 @@ export default function App() {
     }
 
     setError(null);
-    const folder = await createFolder(parentId);
-    setDocumentView('folder');
-    setSelectedFolderId(folder.id);
-    await refreshDocuments(undefined, 'folder', folder.id);
+    let folder: Folder;
+    try {
+      folder = await createFolder(parentId);
+    } catch (createError: unknown) {
+      showOperationError('create-folder', createError, 'Impossible de creer le dossier.');
+      return;
+    }
+
+    try {
+      await refreshDocuments(undefined, 'folder', folder.id);
+      setDocumentView('folder');
+      setSelectedFolderId(folder.id);
+    } catch (loadError: unknown) {
+      showOperationError('refresh-after-create-folder', loadError, 'Dossier cree, mais actualisation impossible.');
+    }
   }
 
   async function handleRenameFolder(id: number, name: string) {
     setError(null);
-    const folder = await renameFolder(id, name);
-    setFolders((currentFolders) => currentFolders.map((item) => (item.id === folder.id ? folder : item)));
-    await refreshDocuments(selectedDocument?.id, documentView, selectedFolderId);
+    try {
+      await renameFolder(id, name);
+    } catch (renameError: unknown) {
+      showOperationError('rename-folder', renameError, 'Impossible de renommer le dossier.');
+      return;
+    }
+
+    try {
+      await refreshDocuments(selectedDocument?.id, documentView, selectedFolderId);
+    } catch (loadError: unknown) {
+      showOperationError('refresh-after-rename-folder', loadError, 'Dossier renomme, mais actualisation impossible.');
+    }
   }
 
   async function handleSelectDocument(id: number, nextView?: DocumentView, nextFolderId?: number | null) {
@@ -420,14 +472,24 @@ export default function App() {
     }
 
     setError(null);
-    const document = await selectDocument(id);
+    let document: TextDocument | null;
+    try {
+      document = await selectDocument(id);
+    } catch (loadError: unknown) {
+      showOperationError('select-document', loadError, 'Impossible de charger le document.');
+      return;
+    }
     if (document) {
       if (nextView) {
         setDocumentView(nextView);
         setSelectedFolderId(nextFolderId ?? null);
       }
       applyDocument(document);
-      await refreshDocuments(document.id, nextView ?? documentView, nextFolderId ?? selectedFolderId);
+      try {
+        await refreshDocuments(document.id, nextView ?? documentView, nextFolderId ?? selectedFolderId);
+      } catch (loadError: unknown) {
+        showOperationError('refresh-after-select-document', loadError, 'Document ouvert, mais actualisation impossible.');
+      }
       focusEditor();
     }
   }
@@ -440,8 +502,9 @@ export default function App() {
     setSaveState('saving');
     setError(null);
 
+    let saved: TextDocument;
     try {
-      const saved = await saveDocument(selectedDocument.id, {
+      saved = await saveDocument(selectedDocument.id, {
         title,
         content,
         notes,
@@ -449,27 +512,33 @@ export default function App() {
         favorite,
         folder_id: folderId,
       });
-      let nextView = documentView;
-      let nextFolderId = selectedFolderId;
-
-      if (documentView === 'folder' || documentView === 'unfiled') {
-        if (saved.folder_id === null) {
-          nextView = 'unfiled';
-          nextFolderId = null;
-        } else {
-          nextView = 'folder';
-          nextFolderId = saved.folder_id;
-        }
-        setDocumentView(nextView);
-        setSelectedFolderId(nextFolderId);
-      }
-
-      applyDocument(saved);
-      await refreshDocuments(saved.id, nextView, nextFolderId);
-      setSaveState('saved');
-    } catch (saveError) {
+    } catch (saveError: unknown) {
       setSaveState('error');
-      setError(saveError instanceof Error ? saveError.message : 'Sauvegarde impossible.');
+      showOperationError('save-document', saveError, 'Impossible de sauvegarder le document.');
+      return;
+    }
+
+    let nextView = documentView;
+    let nextFolderId = selectedFolderId;
+
+    if (documentView === 'folder' || documentView === 'unfiled') {
+      if (saved.folder_id === null) {
+        nextView = 'unfiled';
+        nextFolderId = null;
+      } else {
+        nextView = 'folder';
+        nextFolderId = saved.folder_id;
+      }
+      setDocumentView(nextView);
+      setSelectedFolderId(nextFolderId);
+    }
+
+    applyDocument(saved);
+    setSaveState('saved');
+    try {
+      await refreshDocuments(saved.id, nextView, nextFolderId);
+    } catch (loadError: unknown) {
+      showOperationError('refresh-after-save-document', loadError, 'Document sauvegarde, mais actualisation impossible.');
     }
   }
 
@@ -489,8 +558,18 @@ export default function App() {
     }
 
     setError(null);
-    await trashDocument(selectedDocument.id);
-    await refreshDocuments(undefined, 'all', null);
+    try {
+      await trashDocument(selectedDocument.id);
+    } catch (trashError: unknown) {
+      showOperationError('trash-document', trashError, 'Impossible de deplacer le document vers la corbeille.');
+      return;
+    }
+
+    try {
+      await refreshDocuments(undefined, 'all', null);
+    } catch (loadError: unknown) {
+      showOperationError('refresh-after-trash-document', loadError, 'Document deplace, mais actualisation impossible.');
+    }
   }
 
   async function handleRestoreCurrentDocument() {
@@ -499,10 +578,22 @@ export default function App() {
     }
 
     setError(null);
-    const restored = await restoreDocument(selectedDocument.id);
-    setDocumentView('all');
-    setSelectedFolderId(null);
-    await refreshDocuments(restored.id, 'all', null);
+    let restored: TextDocument;
+    try {
+      restored = await restoreDocument(selectedDocument.id);
+    } catch (restoreError: unknown) {
+      showOperationError('restore-document', restoreError, 'Impossible de restaurer le document.');
+      return;
+    }
+
+    try {
+      await refreshDocuments(restored.id, 'all', null);
+      setDocumentView('all');
+      setSelectedFolderId(null);
+    } catch (loadError: unknown) {
+      showOperationError('refresh-after-restore-document', loadError, 'Document restaure, mais actualisation impossible.');
+      return;
+    }
     focusEditor();
   }
 
@@ -516,8 +607,18 @@ export default function App() {
     }
 
     setError(null);
-    await emptyTrash();
-    await refreshDocuments(undefined, 'trash', null);
+    try {
+      await emptyTrash();
+    } catch (emptyError: unknown) {
+      showOperationError('empty-trash', emptyError, 'Impossible de vider la corbeille.');
+      return;
+    }
+
+    try {
+      await refreshDocuments(undefined, 'trash', null);
+    } catch (loadError: unknown) {
+      showOperationError('refresh-after-empty-trash', loadError, 'Corbeille videe, mais actualisation impossible.');
+    }
   }
 
   useEffect(() => {

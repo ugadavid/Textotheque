@@ -16,6 +16,7 @@
     "test:preload": "tsc -p electron/tsconfig.json && electron scripts/electron-preload-api-check.cjs",
     "test:ui-safeguards": "npm run build && electron scripts/electron-ui-safeguards-check.cjs",
     "test:app-identity": "npm run build && node scripts/electron-app-identity-check.cjs",
+    "test:ipc-error": "npm run build && node scripts/electron-ipc-error-check.cjs",
     "test:electron-sqlite": "electron scripts/electron-sqlite-smoke.cjs",
     "test:legacy-migration": "tsc -p electron/tsconfig.json && electron scripts/electron-legacy-migration-check.cjs"
   },

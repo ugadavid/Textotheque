@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 const packageMetadata = require('../package.json') as { name: string; productName?: string };
 const applicationName = packageMetadata.productName ?? packageMetadata.name;
 const identityCheckRequested = process.argv.includes('--textotheque-check-app-identity');
+const ipcErrorCheckRequested = process.argv.includes('--textotheque-check-ipc-error');
 
 app.setName(applicationName);
 
@@ -28,22 +29,36 @@ function getDatabase(): TextothequeDatabase {
   return database;
 }
 
+function registerIpcHandler<Args extends unknown[], Result>(
+  channel: string,
+  handler: (event: IpcMainInvokeEvent, ...args: Args) => Result | Promise<Result>
+): void {
+  ipcMain.handle(channel, async (event, ...args: unknown[]) => {
+    try {
+      return await handler(event, ...(args as Args));
+    } catch (error) {
+      console.error(`[IPC ${channel}]`, error);
+      throw new Error(`L'operation IPC ${channel} a echoue.`);
+    }
+  });
+}
+
 function registerIpcHandlers(): void {
-  ipcMain.handle('documents:list', () => getDatabase().listDocuments());
-  ipcMain.handle('documents:list-deleted', () => getDatabase().listDeletedDocuments());
-  ipcMain.handle('folders:list', () => getDatabase().listFolders());
-  ipcMain.handle('folders:create', (_event, parentId: number | null) => getDatabase().createFolder(parentId));
-  ipcMain.handle('folders:rename', (_event, id: number, name: string) => getDatabase().renameFolder(id, name));
-  ipcMain.handle('documents:create', (_event, folderId: number | null) => getDatabase().createDocument(folderId));
-  ipcMain.handle('documents:get', (_event, id: number) => getDatabase().getDocument(id));
-  ipcMain.handle('documents:update', (_event, id: number, input: DocumentInput) =>
+  registerIpcHandler('documents:list', () => getDatabase().listDocuments());
+  registerIpcHandler('documents:list-deleted', () => getDatabase().listDeletedDocuments());
+  registerIpcHandler('folders:list', () => getDatabase().listFolders());
+  registerIpcHandler('folders:create', (_event, parentId: number | null) => getDatabase().createFolder(parentId));
+  registerIpcHandler('folders:rename', (_event, id: number, name: string) => getDatabase().renameFolder(id, name));
+  registerIpcHandler('documents:create', (_event, folderId: number | null) => getDatabase().createDocument(folderId));
+  registerIpcHandler('documents:get', (_event, id: number) => getDatabase().getDocument(id));
+  registerIpcHandler('documents:update', (_event, id: number, input: DocumentInput) =>
     getDatabase().updateDocument(id, input)
   );
-  ipcMain.handle('documents:mark-opened', (_event, id: number) => getDatabase().markOpened(id));
-  ipcMain.handle('documents:trash', (_event, id: number) => getDatabase().trashDocument(id));
-  ipcMain.handle('documents:restore', (_event, id: number) => getDatabase().restoreDocument(id));
-  ipcMain.handle('documents:empty-trash', () => getDatabase().emptyTrash());
-  ipcMain.handle('app:approve-close', () => {
+  registerIpcHandler('documents:mark-opened', (_event, id: number) => getDatabase().markOpened(id));
+  registerIpcHandler('documents:trash', (_event, id: number) => getDatabase().trashDocument(id));
+  registerIpcHandler('documents:restore', (_event, id: number) => getDatabase().restoreDocument(id));
+  registerIpcHandler('documents:empty-trash', () => getDatabase().emptyTrash());
+  registerIpcHandler('app:approve-close', () => {
     closeApproved = true;
     mainWindow?.close();
   });
@@ -81,6 +96,42 @@ async function createWindow(): Promise<void> {
   });
 }
 
+function openWindow(): void {
+  void createWindow().catch((error: unknown) => {
+    console.error('[Electron createWindow]', error);
+  });
+}
+
+async function runIpcErrorCheck(): Promise<void> {
+  const checkWindow = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  await checkWindow.loadURL('data:text/html,<html><body>ipc error check</body></html>');
+  const result = await checkWindow.webContents.executeJavaScript(`
+    (async () => {
+      try {
+        await window.textotheque.listDocuments();
+        return { rejected: false, message: null };
+      } catch (error) {
+        return {
+          rejected: true,
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+    })()
+  `);
+
+  console.log(`textotheque ipc error check: ${JSON.stringify(result)}`);
+  checkWindow.destroy();
+  app.quit();
+}
+
 app.whenReady().then(() => {
   if (identityCheckRequested) {
     console.log(
@@ -97,11 +148,19 @@ app.whenReady().then(() => {
   }
 
   registerIpcHandlers();
-  void createWindow();
+  if (ipcErrorCheckRequested) {
+    void runIpcErrorCheck().catch((error: unknown) => {
+      console.error('[IPC error check]', error);
+      app.exit(1);
+    });
+    return;
+  }
+
+  openWindow();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      void createWindow();
+      openWindow();
     }
   });
 });

@@ -63,6 +63,20 @@ let documents = [
 ];
 
 let folders = [];
+const forcedFailureCounts = new Map();
+
+function forceFailures(channel, count = 1) {
+  forcedFailureCounts.set(channel, count);
+}
+
+function rejectIfForced(channel) {
+  const remaining = forcedFailureCounts.get(channel) ?? 0;
+  if (remaining <= 0) {
+    return;
+  }
+  forcedFailureCounts.set(channel, remaining - 1);
+  throw new Error(`SQLITE_FORCED ${channel} C:\\private\\textotheque.sqlite`);
+}
 
 function cloneDocument(document) {
   return { ...document };
@@ -71,13 +85,16 @@ function cloneDocument(document) {
 app
   .whenReady()
   .then(async () => {
-    ipcMain.handle('documents:list', () =>
-      documents.filter((document) => !document.deleted_at).map(cloneDocument)
-    );
-    ipcMain.handle('documents:list-deleted', () =>
-      documents.filter((document) => document.deleted_at).map(cloneDocument)
-    );
+    ipcMain.handle('documents:list', () => {
+      rejectIfForced('documents:list');
+      return documents.filter((document) => !document.deleted_at).map(cloneDocument);
+    });
+    ipcMain.handle('documents:list-deleted', () => {
+      rejectIfForced('documents:list-deleted');
+      return documents.filter((document) => document.deleted_at).map(cloneDocument);
+    });
     ipcMain.handle('documents:create', (_event, folderId = null) => {
+      rejectIfForced('documents:create');
       const created = {
         ...documents[0],
         id: Math.max(...documents.map((document) => document.id)) + 1,
@@ -93,6 +110,7 @@ app
     });
     ipcMain.handle('documents:get', (_event, id) => cloneDocument(documents.find((document) => document.id === id)));
     ipcMain.handle('documents:update', (_event, id, input) => {
+      rejectIfForced('documents:update');
       const index = documents.findIndex((document) => document.id === id);
       documents[index] = {
         ...documents[index],
@@ -104,29 +122,37 @@ app
       return cloneDocument(documents[index]);
     });
     ipcMain.handle('documents:mark-opened', (_event, id) => {
+      rejectIfForced('documents:mark-opened');
       const document = documents.find((item) => item.id === id);
       document.last_opened_at = '2026-07-09T00:02:00.000Z';
       return cloneDocument(document);
     });
     ipcMain.handle('documents:trash', (_event, id) => {
+      rejectIfForced('documents:trash');
       const document = documents.find((item) => item.id === id);
       document.deleted_at = '2026-07-09T00:04:00.000Z';
       document.updated_at = '2026-07-09T00:04:00.000Z';
       return cloneDocument(document);
     });
     ipcMain.handle('documents:restore', (_event, id) => {
+      rejectIfForced('documents:restore');
       const document = documents.find((item) => item.id === id);
       document.deleted_at = null;
       document.updated_at = '2026-07-09T00:05:00.000Z';
       return cloneDocument(document);
     });
     ipcMain.handle('documents:empty-trash', () => {
+      rejectIfForced('documents:empty-trash');
       const deletedCount = documents.filter((document) => document.deleted_at).length;
       documents = documents.filter((document) => !document.deleted_at);
       return deletedCount;
     });
-    ipcMain.handle('folders:list', () => folders.map((folder) => ({ ...folder })));
+    ipcMain.handle('folders:list', () => {
+      rejectIfForced('folders:list');
+      return folders.map((folder) => ({ ...folder }));
+    });
     ipcMain.handle('folders:create', (_event, parentId) => {
+      rejectIfForced('folders:create');
       const siblings = folders.filter((folder) => folder.parent_id === parentId);
       const folder = {
         id: folders.length === 0 ? 1 : Math.max(...folders.map((item) => item.id)) + 1,
@@ -140,6 +166,7 @@ app
       return { ...folder };
     });
     ipcMain.handle('folders:rename', (_event, id, name) => {
+      rejectIfForced('folders:rename');
       const index = folders.findIndex((folder) => folder.id === id);
       folders[index] = {
         ...folders[index],
@@ -161,7 +188,77 @@ app
       },
     });
 
+    const rendererConsoleMessages = [];
+    window.webContents.on('console-message', (_event, _level, message) => {
+      rendererConsoleMessages.push(message);
+    });
+
+    forceFailures('documents:list');
     await window.loadURL(pathToFileURL(path.join(__dirname, '..', 'dist', 'index.html')).toString());
+
+    const initialFailureResult = await window.webContents.executeJavaScript(`
+      (async () => {
+        const unhandledRejections = [];
+        window.addEventListener('unhandledrejection', (event) => unhandledRejections.push(String(event.reason)));
+        const start = Date.now();
+        while (Date.now() - start < 3000) {
+          const message = document.querySelector('.error-message')?.textContent ?? '';
+          if (message.includes('Impossible de charger les documents et les dossiers.')) {
+            await new Promise((resolve) => setTimeout(resolve, 150));
+            return {
+              ok: document.querySelectorAll('.document-item').length === 0 &&
+                !message.includes('SQLITE_FORCED') &&
+                !message.includes('C:\\\\private') &&
+                unhandledRejections.length === 0,
+              message,
+            };
+          }
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        }
+        return { ok: false, message: 'initial load error missing' };
+      })()
+    `);
+    if (!initialFailureResult.ok) {
+      throw new Error(`Initial load failure check failed: ${initialFailureResult.message}`);
+    }
+
+    const recoveryResult = await window.webContents.executeJavaScript(`
+      (async () => {
+        const waitFor = async (predicate, label) => {
+          const start = Date.now();
+          while (Date.now() - start < 3000) {
+            const value = predicate();
+            if (value) return value;
+            await new Promise((resolve) => setTimeout(resolve, 30));
+          }
+          throw new Error('Timeout: ' + label);
+        };
+        const findView = (text) =>
+          Array.from(document.querySelectorAll('.nav-view-button')).find((button) => button.textContent.includes(text));
+        findView('Corbeille').click();
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const trashSelected = document.querySelector('.nav-view-button.selected')?.textContent.includes('Corbeille');
+        if (!trashSelected) {
+          return {
+            ok: false,
+            selected: document.querySelector('.nav-view-button.selected')?.textContent ?? null,
+            error: document.querySelector('.error-message')?.textContent ?? null,
+            documentCount: document.querySelectorAll('.document-item').length,
+          };
+        }
+        findView('Tous les textes').click();
+        await waitFor(
+          () => document.querySelector('.nav-view-button.selected')?.textContent.includes('Tous les textes'),
+          'all documents recovery view'
+        );
+        await waitFor(() => document.querySelectorAll('.document-item').length >= 2, 'documents loaded after recovery');
+        await waitFor(() => !document.querySelector('.error-message'), 'load error cleared after recovery');
+        return { ok: true };
+      })()
+    `);
+    if (!recoveryResult.ok) {
+      throw new Error(`Initial load recovery failed: ${JSON.stringify(recoveryResult)}; console=${JSON.stringify(rendererConsoleMessages)}`);
+    }
 
     const result = await window.webContents.executeJavaScript(`
       (async () => {
@@ -577,6 +674,179 @@ app
 
     if (!result.ok) {
       throw new Error('UI safeguards check failed.');
+    }
+
+    forceFailures('documents:create');
+    const createFailureResult = await window.webContents.executeJavaScript(`
+      (async () => {
+        const waitFor = async (predicate, label) => {
+          const start = Date.now();
+          while (Date.now() - start < 3000) {
+            const value = predicate();
+            if (value) return value;
+            await new Promise((resolve) => setTimeout(resolve, 30));
+          }
+          throw new Error('Timeout: ' + label);
+        };
+        window.__ipcUnhandledRejections = [];
+        window.addEventListener('unhandledrejection', (event) => {
+          window.__ipcUnhandledRejections.push(String(event.reason));
+        });
+        const beforeCount = (await window.textotheque.listDocuments()).length;
+        const beforeTitle = document.querySelector('.title-input')?.value;
+        document.querySelector('.pane-header .icon-button').click();
+        const message = await waitFor(
+          () => document.querySelector('.error-message')?.textContent,
+          'create failure message'
+        );
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        return {
+          ok: message.includes('Impossible de creer le document.') &&
+            !message.includes('SQLITE_FORCED') &&
+            (await window.textotheque.listDocuments()).length === beforeCount &&
+            document.querySelector('.title-input')?.value === beforeTitle &&
+            window.__ipcUnhandledRejections.length === 0,
+          message,
+        };
+      })()
+    `);
+    if (!createFailureResult.ok) {
+      throw new Error(`Create failure check failed: ${createFailureResult.message}`);
+    }
+
+    forceFailures('documents:update');
+    const saveFailureResult = await window.webContents.executeJavaScript(`
+      (async () => {
+        const waitFor = async (predicate, label) => {
+          const start = Date.now();
+          while (Date.now() - start < 3000) {
+            const value = predicate();
+            if (value) return value;
+            await new Promise((resolve) => setTimeout(resolve, 30));
+          }
+          throw new Error('Timeout: ' + label);
+        };
+        const selectedId = Number(document.querySelector('.status-bar')?.textContent.match(/Document (\\d+)/)?.[1]);
+        const persistedBefore = (await window.textotheque.listDocuments()).find((item) => item.id === selectedId)?.content;
+        const editor = document.querySelector('.content-editor');
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')
+          .set.call(editor, 'Contenu refuse par SQLite');
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        document.querySelector('.primary-button').click();
+        const message = await waitFor(
+          () => {
+            const text = document.querySelector('.error-message')?.textContent ?? '';
+            return text.includes('Impossible de sauvegarder le document.') ? text : null;
+          },
+          'save failure message'
+        );
+        await waitFor(() => document.querySelector('.save-state.error'), 'save failure state');
+        const persistedAfterFailure = (await window.textotheque.listDocuments()).find((item) => item.id === selectedId)?.content;
+        const failureStateIsCorrect = Boolean(document.querySelector('.title-dirty-marker')) &&
+          persistedAfterFailure === persistedBefore &&
+          message.includes('Impossible de sauvegarder le document.') &&
+          !message.includes('SQLITE_FORCED');
+
+        document.querySelector('.primary-button').click();
+        await waitFor(() => !document.querySelector('.title-dirty-marker'), 'successful save after failure');
+        await waitFor(() => !document.querySelector('.error-message'), 'old save error cleared');
+        return {
+          ok: failureStateIsCorrect && window.__ipcUnhandledRejections.length === 0,
+          message,
+        };
+      })()
+    `);
+    if (!saveFailureResult.ok) {
+      throw new Error(`Save failure check failed: ${saveFailureResult.message}`);
+    }
+
+    forceFailures('folders:rename');
+    const folderFailureResult = await window.webContents.executeJavaScript(`
+      (async () => {
+        const waitFor = async (predicate, label) => {
+          const start = Date.now();
+          while (Date.now() - start < 3000) {
+            const value = predicate();
+            if (value) return value;
+            await new Promise((resolve) => setTimeout(resolve, 30));
+          }
+          throw new Error('Timeout: ' + label);
+        };
+        const persistedBefore = (await window.textotheque.listFolders())[0];
+        const firstRow = document.querySelector('.folder-row');
+        firstRow.querySelector('.folder-button').click();
+        const renameButton = await waitFor(
+          () => firstRow.querySelector('.folder-rename-button'),
+          'folder rename button'
+        );
+        renameButton.click();
+        const input = await waitFor(() => firstRow.querySelector('.folder-name-input'), 'folder rename input');
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Nom refuse');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+        const message = await waitFor(
+          () => {
+            const text = document.querySelector('.error-message')?.textContent ?? '';
+            return text.includes('Impossible de renommer le dossier.') ? text : null;
+          },
+          'folder rename failure message'
+        );
+        const persistedAfter = (await window.textotheque.listFolders())[0];
+        return {
+          ok: message.includes('Impossible de renommer le dossier.') &&
+            persistedAfter.name === persistedBefore.name &&
+            !document.querySelector('.folder-section')?.textContent.includes('Nom refuse') &&
+            window.__ipcUnhandledRejections.length === 0,
+          message,
+        };
+      })()
+    `);
+    if (!folderFailureResult.ok) {
+      throw new Error(`Folder failure check failed: ${folderFailureResult.message}`);
+    }
+
+    forceFailures('documents:trash');
+    const trashFailureResult = await window.webContents.executeJavaScript(`
+      (async () => {
+        const waitFor = async (predicate, label) => {
+          const start = Date.now();
+          while (Date.now() - start < 3000) {
+            const value = predicate();
+            if (value) return value;
+            await new Promise((resolve) => setTimeout(resolve, 30));
+          }
+          throw new Error('Timeout: ' + label);
+        };
+        const selectedId = Number(document.querySelector('.status-bar')?.textContent.match(/Document (\\d+)/)?.[1]);
+        document.querySelector('.trash-button').click();
+        const dialog = await waitFor(() => document.querySelector('.confirm-dialog'), 'trash failure confirmation');
+        dialog.querySelector('.danger-button').click();
+        const message = await waitFor(
+          () => {
+            const text = document.querySelector('.error-message')?.textContent ?? '';
+            return text.includes('Impossible de deplacer le document vers la corbeille.') ? text : null;
+          },
+          'trash failure message'
+        );
+        const activeDocument = (await window.textotheque.listDocuments()).find((item) => item.id === selectedId);
+        return {
+          ok: message.includes('Impossible de deplacer le document vers la corbeille.') &&
+            Boolean(activeDocument) &&
+            Number(document.querySelector('.status-bar')?.textContent.match(/Document (\\d+)/)?.[1]) === selectedId &&
+            window.__ipcUnhandledRejections.length === 0,
+          message,
+        };
+      })()
+    `);
+    if (!trashFailureResult.ok) {
+      throw new Error(`Trash failure check failed: ${trashFailureResult.message}`);
+    }
+
+    const unexpectedRejectionLog = rendererConsoleMessages.find((message) =>
+      /UnhandledPromiseRejection|Unhandled Promise Rejection|uncaught \(in promise\)/i.test(message)
+    );
+    if (unexpectedRejectionLog) {
+      throw new Error(`Unexpected unhandled rejection log: ${unexpectedRejectionLog}`);
     }
 
     console.log('ui safeguards ok');
