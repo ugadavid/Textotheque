@@ -1,11 +1,13 @@
 import type { DocumentInput, Folder, TextDocument } from './document';
-import type { LibraryBackupResult, LibraryInfo } from './library';
+import type { LibraryBackupResult, LibraryInfo, LibraryOpenResult } from './library';
 
 declare global {
   interface Window {
     textotheque: {
       getLibraryInfo: () => Promise<LibraryInfo>;
       backupLibrary: () => Promise<LibraryBackupResult>;
+      chooseOpenLibrary: () => Promise<LibraryOpenResult>;
+      openLibrary: (candidatePath: string, migrationApproved: boolean) => Promise<LibraryOpenResult>;
       listDocuments: () => Promise<TextDocument[]>;
       listDeletedDocuments: () => Promise<TextDocument[]>;
       listFolders: () => Promise<Folder[]>;

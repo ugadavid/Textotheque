@@ -12,6 +12,18 @@ app
       isTextotheque: true,
     }));
     ipcMain.handle('library:backup', () => ({ canceled: true, path: null, fileName: null, error: null }));
+    ipcMain.handle('library:choose-open', () => ({
+      status: 'compatible',
+      inspection: { path: 'C:\\temporary\\other.sqlite', compatibility: 'compatible' },
+      library: null,
+      backupPath: null,
+    }));
+    ipcMain.handle('library:open', (_event, candidatePath, migrationApproved) => ({
+      status: 'opened',
+      inspection: { path: candidatePath, compatibility: 'compatible' },
+      library: { path: candidatePath, fileName: 'other.sqlite', applicationId: 1413830735, userVersion: 2, isTextotheque: true },
+      backupPath: migrationApproved ? 'C:\\temporary\\pre-migration.sqlite' : null,
+    }));
     ipcMain.handle('documents:list', () => []);
     ipcMain.handle('documents:list-deleted', () => []);
     ipcMain.handle('documents:create', (_event, folderId = null) => ({
@@ -73,6 +85,8 @@ app
         if (!api) return { ok: false, reason: 'window.textotheque missing' };
         if (typeof api.getLibraryInfo !== 'function') return { ok: false, reason: 'getLibraryInfo missing' };
         if (typeof api.backupLibrary !== 'function') return { ok: false, reason: 'backupLibrary missing' };
+        if (typeof api.chooseOpenLibrary !== 'function') return { ok: false, reason: 'chooseOpenLibrary missing' };
+        if (typeof api.openLibrary !== 'function') return { ok: false, reason: 'openLibrary missing' };
         if (typeof api.listDocuments !== 'function') return { ok: false, reason: 'listDocuments missing' };
         if (typeof api.listDeletedDocuments !== 'function') return { ok: false, reason: 'listDeletedDocuments missing' };
         if (typeof api.createDocument !== 'function') return { ok: false, reason: 'createDocument missing' };
@@ -90,6 +104,8 @@ app
         const documents = await api.listDocuments();
         const libraryInfo = await api.getLibraryInfo();
         const canceledBackup = await api.backupLibrary();
+        const chosenLibrary = await api.chooseOpenLibrary();
+        const openedLibrary = await api.openLibrary(chosenLibrary.inspection.path, true);
         const deletedDocuments = await api.listDeletedDocuments();
         const folders = await api.listFolders();
         const createdFolder = await api.createFolder(null);
@@ -112,6 +128,10 @@ app
             libraryInfo.userVersion === 2 &&
             canceledBackup.canceled === true &&
             canceledBackup.path === null &&
+            chosenLibrary.status === 'compatible' &&
+            openedLibrary.status === 'opened' &&
+            openedLibrary.library.fileName === 'other.sqlite' &&
+            openedLibrary.backupPath.endsWith('pre-migration.sqlite') &&
             Array.isArray(deletedDocuments) &&
             Array.isArray(folders) &&
             created &&

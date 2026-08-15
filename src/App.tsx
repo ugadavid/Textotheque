@@ -25,12 +25,13 @@ import {
   trashDocument,
 } from './services/documents';
 import { getErrorMessage, logRendererError } from './services/errors';
-import { backupLibrary, getLibraryInfo } from './services/library';
+import { backupLibrary, chooseOpenLibrary, getLibraryInfo, openLibrary } from './services/library';
 import type { DocumentStatus, Folder, TextDocument } from './types/document';
-import type { LibraryInfo } from './types/library';
+import type { LibraryInfo, LibraryInspection, LibraryOpenResult } from './types/library';
 
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 type LibraryBackupState = 'idle' | 'saving' | 'success';
+type LibraryOpenState = 'idle' | 'choosing' | 'opening';
 type ResizeTarget = 'left' | 'right';
 type DocumentView = 'navigation' | 'all' | 'unfiled' | 'folder' | 'trash';
 
@@ -38,6 +39,7 @@ const UNSAVED_CHANGES_MESSAGE =
   'Ce document contient des modifications non sauvegardees. Voulez-vous vraiment continuer sans sauvegarder ?';
 const LEGACY_PANE_STORAGE_KEY = 'textotheque:pane-widths:v1';
 const PANE_LAYOUT_STORAGE_KEY = 'textotheque:pane-layout:v2';
+const EXPANDED_FOLDERS_STORAGE_KEY = 'textotheque:expanded-folders:v2';
 const UNTITLED_FALLBACK = 'Sans titre';
 
 interface PaneLayout {
@@ -121,6 +123,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [libraryInfo, setLibraryInfo] = useState<LibraryInfo | null>(null);
   const [libraryBackupState, setLibraryBackupState] = useState<LibraryBackupState>('idle');
+  const [libraryOpenState, setLibraryOpenState] = useState<LibraryOpenState>('idle');
   const [libraryNotice, setLibraryNotice] = useState<string | null>(null);
   const [paneLayout, setPaneLayout] = useState<PaneLayout>(() => loadPaneLayout());
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
@@ -613,6 +616,137 @@ export default function App() {
     }
   }
 
+  function migrationMessage(inspection: LibraryInspection): string {
+    if (inspection.applicationId === 0 && inspection.userVersion === libraryInfo?.userVersion) {
+      return 'Cette ancienne bibliothèque Textothèque doit être adoptée avant ouverture. Une copie de sauvegarde sera créée automatiquement.';
+    }
+    return 'Cette bibliothèque utilise un ancien format Textothèque et doit être mise à jour avant ouverture. Une copie de sauvegarde sera créée automatiquement.';
+  }
+
+  async function confirmLibraryMigration(inspection: LibraryInspection): Promise<boolean> {
+    return confirmAction({
+      title: inspection.applicationId === 0 ? 'Ancienne bibliothèque Textothèque' : 'Migration nécessaire',
+      message: migrationMessage(inspection),
+      confirmLabel: 'Migrer et ouvrir',
+    });
+  }
+
+  function showLibraryOpenResultError(result: LibraryOpenResult): void {
+    const messages: Partial<Record<LibraryOpenResult['status'], string>> = {
+      'too-new': 'Cette bibliothèque est plus récente que cette version de Textothèque.',
+      foreign: 'Cette bibliothèque appartient à une autre application.',
+      invalid: 'Ce fichier ne contient pas une bibliothèque Textothèque valide.',
+      'backup-failed': 'Impossible de créer la sauvegarde nécessaire à la migration.',
+      'migration-failed': 'Impossible de migrer cette bibliothèque.',
+      'open-failed': 'Impossible d’ouvrir cette bibliothèque.',
+    };
+    setError(messages[result.status] ?? 'Impossible d’ouvrir cette bibliothèque.');
+  }
+
+  function clearWorkspaceForLibrarySwitch(nextLibrary: LibraryInfo): void {
+    setDocuments([]);
+    setDeletedDocuments([]);
+    setFolders([]);
+    setDocumentView('navigation');
+    setSelectedFolderId(null);
+    setSelectedDocument(null);
+    setTitle('');
+    setContent('');
+    setNotes('');
+    setStatus('draft');
+    setFavorite(false);
+    setFolderId(null);
+    setSaveState('idle');
+    setSearchQuery('');
+    restoreHiddenNavigationAfterSearchRef.current = false;
+    window.localStorage.removeItem(EXPANDED_FOLDERS_STORAGE_KEY);
+    setLibraryInfo(nextLibrary);
+  }
+
+  async function finishLibrarySwitch(result: LibraryOpenResult): Promise<void> {
+    if (!result.library) {
+      throw new Error('La bibliothèque ouverte ne fournit pas ses informations.');
+    }
+    clearWorkspaceForLibrarySwitch(result.library);
+    const [nextDocuments, nextDeletedDocuments, nextFolders] = await Promise.all([
+      listDocuments(),
+      listDeletedDocuments(),
+      listFolders(),
+    ]);
+    setDocuments(nextDocuments);
+    setDeletedDocuments(nextDeletedDocuments);
+    setFolders(nextFolders);
+    setLibraryNotice(`Bibliothèque ouverte : ${result.library.fileName}.`);
+  }
+
+  async function handleOpenLibrary() {
+    if (!(await confirmDiscardUnsavedChanges())) {
+      return;
+    }
+
+    setError(null);
+    setLibraryNotice(null);
+    setLibraryOpenState('choosing');
+    let selection: LibraryOpenResult;
+    try {
+      selection = await chooseOpenLibrary();
+    } catch (openError: unknown) {
+      setLibraryOpenState('idle');
+      showOperationError('choose-library', openError, 'Impossible d’ouvrir le sélecteur de bibliothèque.');
+      return;
+    }
+
+    if (selection.status === 'canceled') {
+      setLibraryOpenState('idle');
+      return;
+    }
+    if (selection.status === 'same') {
+      setLibraryOpenState('idle');
+      setLibraryNotice('Cette bibliothèque est déjà ouverte.');
+      return;
+    }
+    if (selection.status === 'too-new' || selection.status === 'foreign' || selection.status === 'invalid') {
+      setLibraryOpenState('idle');
+      showLibraryOpenResultError(selection);
+      return;
+    }
+
+    let migrationApproved = false;
+    if (selection.status === 'needs-migration') {
+      setLibraryOpenState('idle');
+      if (!selection.inspection || !(await confirmLibraryMigration(selection.inspection))) {
+        return;
+      }
+      migrationApproved = true;
+    }
+
+    setLibraryOpenState('opening');
+    try {
+      let result = await openLibrary(selection.inspection!.path, migrationApproved);
+      if (result.status === 'needs-migration' && !migrationApproved && result.inspection) {
+        setLibraryOpenState('idle');
+        if (!(await confirmLibraryMigration(result.inspection))) {
+          return;
+        }
+        setLibraryOpenState('opening');
+        result = await openLibrary(result.inspection.path, true);
+      }
+      if (result.status === 'same') {
+        setLibraryNotice('Cette bibliothèque est déjà ouverte.');
+        return;
+      }
+      if (result.status !== 'opened') {
+        showLibraryOpenResultError(result);
+        return;
+      }
+      await finishLibrarySwitch(result);
+    } catch (openError: unknown) {
+      showOperationError('open-library', openError, 'Impossible d’ouvrir cette bibliothèque.');
+    } finally {
+      setLibraryOpenState('idle');
+    }
+  }
+
   async function handleTrashCurrentDocument() {
     if (!selectedDocument || selectedDocumentIsDeleted) {
       return;
@@ -845,6 +979,7 @@ export default function App() {
         }
       >
         {paneLayout.leftVisible ? <NavigationPane
+          key={libraryInfo?.path ?? 'loading-library'}
           searchResults={visibleDocuments}
           allDocuments={documents}
           deletedDocuments={deletedDocuments}
@@ -894,7 +1029,9 @@ export default function App() {
           onToggleNavigation={toggleNavigationPane}
           onToggleMetadata={toggleMetadataPane}
           libraryBackupState={libraryBackupState}
+          libraryOpenState={libraryOpenState}
           onBackupLibrary={handleBackupLibrary}
+          onOpenLibrary={handleOpenLibrary}
           onSearchChange={handleSearchChange}
           onClearSearch={clearSearchAndReturnToNavigation}
           onSave={handleSave}

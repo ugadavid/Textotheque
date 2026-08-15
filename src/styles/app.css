@@ -721,7 +721,8 @@ h2 {
   gap: 10px;
 }
 
-.library-backup-button {
+.library-backup-button,
+.library-open-button {
   white-space: nowrap;
 }
 

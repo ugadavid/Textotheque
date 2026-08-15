@@ -1,8 +1,17 @@
-import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, type SaveDialogOptions } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  type IpcMainInvokeEvent,
+  type OpenDialogOptions,
+  type SaveDialogOptions,
+} from 'electron';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { createTextothequeDatabase, DocumentInput, TextothequeDatabase } from './database.js';
+import { DocumentInput, type TextothequeDatabase } from './database.js';
+import { ActiveLibraryManager } from './library-manager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,7 +24,7 @@ const ipcErrorCheckRequested = process.argv.includes('--textotheque-check-ipc-er
 app.setName(applicationName);
 
 let mainWindow: BrowserWindow | null = null;
-let database: TextothequeDatabase | null = null;
+let libraryManager: ActiveLibraryManager | null = null;
 let closeApproved = false;
 
 function getDatabasePath(): string {
@@ -23,10 +32,15 @@ function getDatabasePath(): string {
 }
 
 function getDatabase(): TextothequeDatabase {
-  if (!database) {
-    database = createTextothequeDatabase(getDatabasePath());
+  if (!libraryManager) {
+    libraryManager = new ActiveLibraryManager(getDatabasePath());
   }
-  return database;
+  return libraryManager.getDatabase();
+}
+
+function getLibraryManager(): ActiveLibraryManager {
+  getDatabase();
+  return libraryManager!;
 }
 
 function registerIpcHandler<Args extends unknown[], Result>(
@@ -45,6 +59,27 @@ function registerIpcHandler<Args extends unknown[], Result>(
 
 function registerIpcHandlers(): void {
   registerIpcHandler('library:get-info', () => getDatabase().getLibraryInfo());
+  registerIpcHandler('library:choose-open', async () => {
+    const options: OpenDialogOptions = {
+      title: 'Ouvrir une bibliothèque Textothèque',
+      buttonLabel: 'Inspecter la bibliothèque',
+      filters: [
+        { name: 'Bibliothèque SQLite', extensions: ['sqlite'] },
+        { name: 'Tous les fichiers', extensions: ['*'] },
+      ],
+      properties: ['openFile'],
+    };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || result.filePaths.length === 0) {
+      return { status: 'canceled', inspection: null, library: null, backupPath: null };
+    }
+    return getLibraryManager().inspectCandidate(result.filePaths[0]);
+  });
+  registerIpcHandler('library:open', (_event, candidatePath: string, migrationApproved: boolean) =>
+    getLibraryManager().openCandidate(candidatePath, migrationApproved)
+  );
   registerIpcHandler('library:backup', async () => {
     const library = getDatabase();
     const libraryInfo = library.getLibraryInfo();
@@ -199,5 +234,5 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
-  database?.close();
+  libraryManager?.close();
 });

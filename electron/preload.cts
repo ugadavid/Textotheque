@@ -1,10 +1,14 @@
 import type { DocumentInput, Folder, LibraryBackupResult, LibraryInfo, TextDocument } from './database.js';
+import type { LibraryOpenResult } from './library-manager.js';
 
 const { contextBridge, ipcRenderer } = require('electron') as typeof import('electron');
 
 const api = {
   getLibraryInfo: (): Promise<LibraryInfo> => ipcRenderer.invoke('library:get-info'),
   backupLibrary: (): Promise<LibraryBackupResult> => ipcRenderer.invoke('library:backup'),
+  chooseOpenLibrary: (): Promise<LibraryOpenResult> => ipcRenderer.invoke('library:choose-open'),
+  openLibrary: (candidatePath: string, migrationApproved: boolean): Promise<LibraryOpenResult> =>
+    ipcRenderer.invoke('library:open', candidatePath, migrationApproved),
   listDocuments: (): Promise<TextDocument[]> => ipcRenderer.invoke('documents:list'),
   listDeletedDocuments: (): Promise<TextDocument[]> => ipcRenderer.invoke('documents:list-deleted'),
   listFolders: (): Promise<Folder[]> => ipcRenderer.invoke('folders:list'),

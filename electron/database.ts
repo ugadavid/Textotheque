@@ -68,6 +68,11 @@ export interface LibraryBackupResult {
   error: 'same-source' | null;
 }
 
+export interface PreMigrationBackupResult {
+  path: string;
+  inspection: LibraryInspection;
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -241,6 +246,117 @@ export function inspectTextothequeLibrary(dbPath: string): LibraryInspection {
     };
   } finally {
     inspectionDb?.close();
+  }
+}
+
+interface LibraryContentFingerprint {
+  documents: number;
+  documentPayload: number;
+  favorites: number;
+  deleted: number;
+  folders: number;
+  folderPayload: number;
+}
+
+function fingerprintLibrary(db: Database.Database): LibraryContentFingerprint {
+  const deletedExpression = columnExists(db, 'documents', 'deleted_at')
+    ? 'COALESCE(SUM(deleted_at IS NOT NULL), 0)'
+    : '0';
+  const documentSummary = db
+    .prepare(
+      `SELECT COUNT(*) AS count,
+              COALESCE(SUM(length(title) + length(content) + length(notes)), 0) AS payload,
+              COALESCE(SUM(favorite), 0) AS favorites,
+              ${deletedExpression} AS deleted
+       FROM documents`
+    )
+    .get() as { count: number; payload: number; favorites: number; deleted: number };
+  const hasFolders = tableExists(db, 'folders');
+  const folderSummary = hasFolders
+    ? (db
+        .prepare(
+          `SELECT COUNT(*) AS count,
+                  COALESCE(SUM(length(name)), 0) AS payload
+           FROM folders`
+        )
+        .get() as { count: number; payload: number })
+    : { count: 0, payload: 0 };
+
+  return {
+    documents: documentSummary.count,
+    documentPayload: documentSummary.payload,
+    favorites: documentSummary.favorites,
+    deleted: documentSummary.deleted,
+    folders: folderSummary.count,
+    folderPayload: folderSummary.payload,
+  };
+}
+
+function backupTimestamp(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}_${String(now.getMilliseconds()).padStart(3, '0')}`;
+}
+
+function availablePreMigrationBackupPath(source: LibraryInspection): string {
+  const extension = path.extname(source.fileName);
+  const baseName = path.basename(source.fileName, extension);
+  const operation =
+    source.userVersion !== null && source.userVersion < CURRENT_SCHEMA_VERSION
+      ? `pre-migration_v${source.userVersion}-to-v${CURRENT_SCHEMA_VERSION}`
+      : 'pre-adoption';
+  const stem = `${baseName}_${operation}_${backupTimestamp()}`;
+  let candidate = path.join(path.dirname(source.path), `${stem}.sqlite`);
+  let suffix = 2;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(path.dirname(source.path), `${stem}_${suffix}.sqlite`);
+    suffix += 1;
+  }
+  return candidate;
+}
+
+export async function createVerifiedPreMigrationBackup(
+  sourceInspection: LibraryInspection
+): Promise<PreMigrationBackupResult> {
+  if (
+    !sourceInspection.readable ||
+    !sourceInspection.isTextotheque ||
+    sourceInspection.compatibility !== 'legacy-textotheque' ||
+    sourceInspection.userVersion === null
+  ) {
+    throw new Error("La source n'est pas une bibliothèque legacy sauvegardable avant migration.");
+  }
+
+  const destinationPath = availablePreMigrationBackupPath(sourceInspection);
+  let sourceDb: Database.Database | null = null;
+  let destinationDb: Database.Database | null = null;
+  try {
+    sourceDb = new Database(sourceInspection.path, { readonly: true, fileMustExist: true });
+    const sourceFingerprint = fingerprintLibrary(sourceDb);
+    await sourceDb.backup(destinationPath);
+    sourceDb.close();
+    sourceDb = null;
+
+    const backupInspection = inspectTextothequeLibrary(destinationPath);
+    if (
+      !backupInspection.readable ||
+      !backupInspection.isTextotheque ||
+      backupInspection.compatibility !== sourceInspection.compatibility ||
+      backupInspection.applicationId !== sourceInspection.applicationId ||
+      backupInspection.userVersion !== sourceInspection.userVersion
+    ) {
+      throw new Error("Le backup pré-migration ne correspond pas à l'identité et à la version de la source.");
+    }
+
+    destinationDb = new Database(destinationPath, { readonly: true, fileMustExist: true });
+    const destinationFingerprint = fingerprintLibrary(destinationDb);
+    if (JSON.stringify(destinationFingerprint) !== JSON.stringify(sourceFingerprint)) {
+      throw new Error("Le contenu représentatif du backup pré-migration ne correspond pas à la source.");
+    }
+
+    return { path: destinationPath, inspection: backupInspection };
+  } finally {
+    destinationDb?.close();
+    sourceDb?.close();
   }
 }
 

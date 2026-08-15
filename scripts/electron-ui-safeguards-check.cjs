@@ -64,6 +64,7 @@ let documents = [
 
 let folders = [];
 let libraryBackupInvocations = 0;
+let libraryChooseOpenInvocations = 0;
 const forcedFailureCounts = new Map();
 
 function forceFailures(channel, count = 1) {
@@ -99,6 +100,13 @@ app
       return libraryBackupInvocations === 1
         ? { canceled: true, path: null, fileName: null, error: null }
         : { canceled: false, path: 'C:\\temporary\\backup.sqlite', fileName: 'backup.sqlite', error: null };
+    });
+    ipcMain.handle('library:choose-open', () => {
+      libraryChooseOpenInvocations += 1;
+      return { status: 'canceled', inspection: null, library: null, backupPath: null };
+    });
+    ipcMain.handle('library:open', () => {
+      throw new Error('library:open should not be invoked by the cancellation safeguard');
     });
     ipcMain.handle('documents:list', () => {
       rejectIfForced('documents:list');
@@ -326,6 +334,10 @@ app
         if (!libraryBackupButton || !libraryBackupButton.textContent.includes('Copie bibliothèque')) {
           throw new Error('library backup action missing');
         }
+        const libraryOpenButton = document.querySelector('.library-open-button');
+        if (!libraryOpenButton || !libraryOpenButton.textContent.includes('Ouvrir bibliothèque')) {
+          throw new Error('library open action missing');
+        }
         libraryBackupButton.click();
         await new Promise((resolve) => setTimeout(resolve, 100));
         if (document.querySelector('.success-message') || document.querySelector('.error-message')) {
@@ -350,7 +362,7 @@ app
         }
         const viewButtons = document.querySelectorAll('.nav-view-button');
         if (viewButtons.length !== 2) throw new Error('document view buttons missing');
-        if (expectedAppVersion !== '0.1.16') throw new Error('unexpected application version');
+        if (expectedAppVersion !== '0.1.17') throw new Error('unexpected application version');
         const initialExpandedState = JSON.parse(window.localStorage.getItem('textotheque:expanded-folders:v2') ?? '[]');
         if (initialExpandedState.length !== 0) throw new Error('folders should be closed by default');
         await waitFor(() => window.localStorage.getItem('textotheque:pane-layout:v2'), 'pane layout stored');
@@ -649,6 +661,13 @@ app
         editor.dispatchEvent(new Event('input', { bubbles: true }));
         await waitFor(() => document.querySelector('.title-dirty-marker'), 'dirty marker visible');
         await waitFor(() => document.querySelector('.status-bar')?.textContent.includes('Modifie'), 'status dirty state');
+        document.querySelector('.library-open-button').click();
+        await waitFor(() => document.querySelector('.confirm-dialog'), 'library switch respects dirty confirmation');
+        document.querySelector('.confirm-dialog .secondary-button').click();
+        await waitFor(() => !document.querySelector('.confirm-dialog'), 'library switch confirmation canceled');
+        if (!document.querySelector('.title-dirty-marker')) {
+          throw new Error('canceling a dirty library switch cleared pending edits');
+        }
         const dirtyTitleBeforeToggle = document.querySelector('.title-input').value;
         document.querySelector('.toggle-navigation-button').click();
         await waitFor(() => !document.querySelector('.navigation-pane'), 'left pane hidden with dirty document');
@@ -860,6 +879,9 @@ app
     }
     if (libraryBackupInvocations !== 2) {
       throw new Error(`Library backup cancellation and success should invoke IPC twice, got ${libraryBackupInvocations}.`);
+    }
+    if (libraryChooseOpenInvocations !== 0) {
+      throw new Error(`Dirty cancellation must happen before native selection, got ${libraryChooseOpenInvocations} invocation(s).`);
     }
 
     forceFailures('library:backup');

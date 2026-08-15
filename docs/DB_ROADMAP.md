@@ -715,7 +715,7 @@ Ne pas utiliser un libellé ambigu comme `Enregistrer sous` pour le backup.
 
 # 19. Roadmap fonctionnelle proposée
 
-## 0.1.16 — Identité de bibliothèque + sauvegarde complète
+## 0.1.16 — Identité de bibliothèque + sauvegarde complète (réalisée)
 
 Objectifs :
 
@@ -731,7 +731,7 @@ Cette version doit fournir le **parachute** avant le multi-base.
 
 ---
 
-## 0.1.17 — Ouvrir une bibliothèque + migrations utilisateur
+## 0.1.17 — Ouvrir une bibliothèque + migrations utilisateur (réalisée)
 
 Objectifs :
 
@@ -745,6 +745,8 @@ Objectifs :
 - refus propre des bases trop récentes ;
 - bascule de la DB courante ;
 - dirty-state protégé.
+
+Choix réalisés : inspection SQLite en lecture seule avant toute mutation, backup pré-migration vérifié créé à côté de la bibliothèque candidate, puis bascule atomique de la connexion active seulement après ouverture et lectures de contrôle réussies. La bibliothèque choisie reste limitée à la session courante dans cette première étape.
 
 ---
 
@@ -971,7 +973,7 @@ Possibilités :
 - emplacement dédié choisi/configuré ;
 - autre stratégie simple.
 
-La première implémentation doit privilégier la transparence et la capacité de retrouver facilement le backup.
+Décidé en `0.1.17` : la première implémentation place le backup vérifié à côté de la bibliothèque candidate, avec un nom horodaté explicite et sans écrasement. Un échec de migration conserve ce backup.
 
 ## Migration au démarrage de la bibliothèque par défaut
 
