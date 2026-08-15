@@ -528,7 +528,7 @@ La base actuelle située dans le profil Textothèque peut rester la bibliothèqu
 Conceptuellement :
 
 ```text
-%APPDATA%\Textotheque	extotheque.sqlite
+%APPDATA%\Textotheque\textotheque.sqlite
 ```
 
 Mais elle ne doit plus être considérée comme l’unique bibliothèque possible.
@@ -600,29 +600,60 @@ Le chemin courant fait partie du contexte de session de l’application.
 
 Dès que plusieurs bases sont possibles, l’utilisateur doit pouvoir savoir à tout moment où il écrit.
 
-Affichage possible dans la barre de statut :
-
-```text
-Recherche.sqlite
-```
-
-ou :
+La barre de statut affiche actuellement le nom de la bibliothèque active :
 
 ```text
 Bibliothèque : Recherche.sqlite
 ```
 
-Le chemin complet peut être accessible via :
+Le chemin complet peut rester accessible via une infobulle ou une information secondaire.
 
-- infobulle ;
-- panneau/commande dédiée ;
-- information secondaire.
+Éviter de charger visuellement l’interface avec un chemin complet permanent.
 
-Éviter de charger visuellement l’interface avec un chemin Windows complet permanent.
+La bibliothèque courante doit également être identifiable dans le futur menu `Bibliothèque`, par exemple avec un marqueur `✓`.
 
 ---
 
-# 15. Création d’une nouvelle bibliothèque
+# 15. Menu racine `Bibliothèque`
+
+Les opérations portant sur le contenant SQLite complet doivent vivre dans un menu racine dédié :
+
+```text
+Bibliothèque
+├── Nouvelle bibliothèque…
+├── Ouvrir une bibliothèque…
+├── Bibliothèques connues
+│   ├── ✓ textotheque.sqlite
+│   ├── M2.sqlite
+│   ├── Dev.sqlite
+│   └── Archives.sqlite
+├──────────────
+├── Sauvegarder une copie…
+└── Informations…
+```
+
+Le libellé exact pourra évoluer légèrement avec l’UX réelle, mais le principe est fixé :
+
+> les opérations sur la bibliothèque SQLite ne sont pas mélangées avec les futurs imports/exports de documents individuels.
+
+Un futur menu `Fichier` pourra ainsi rester réservé aux opérations documentaires :
+
+```text
+Fichier
+├── Importer…
+├── Exporter…
+└── ...
+```
+
+Règle d’interface :
+
+> la barre haute contient les actions fréquentes ; les menus contiennent les opérations occasionnelles.
+
+À terme, les commandes `Ouvrir bibliothèque…` et `Copie bibliothèque…` pourront donc quitter la barre haute lorsque le menu `Bibliothèque` sera stabilisé.
+
+---
+
+# 16. Création d’une nouvelle bibliothèque
 
 ## Commande cible
 
@@ -649,42 +680,126 @@ schéma courant
 
 Puis l’ouvre.
 
+Une bibliothèque créée et ouverte avec succès rejoint immédiatement l’historique des bibliothèques connues.
+
 ---
 
-# 16. Bibliothèques récentes
+# 17. Historique durable des bibliothèques connues
 
-Après stabilisation de l’ouverture multi-base, Textothèque pourra mémoriser une petite liste de bases récemment ouvertes.
+Le concept retenu n’est pas une simple liste temporaire de « récentes ».
+
+Textothèque maintient un **registre durable des bibliothèques connues**.
+
+Une bibliothèque entre dans ce registre uniquement lorsqu’elle a réellement été ouverte avec succès comme bibliothèque active.
+
+Exemples :
+
+```text
+ouvrir M2.sqlite avec succès
+→ ajout / mise à jour historique
+
+créer Dev.sqlite puis l’ouvrir
+→ ajout historique
+
+créer un backup
+→ pas ajouté
+
+créer un backup pré-migration
+→ pas ajouté
+
+sélectionner une DB étrangère ou invalide
+→ pas ajoutée
+```
+
+Pour chaque bibliothèque connue, conserver seulement les informations utiles :
+
+```json
+{
+  "path": "J:\\Textes\\M2.sqlite",
+  "firstOpenedAt": "2026-08-15T20:00:00.000Z",
+  "lastOpenedAt": "2026-08-15T22:12:00.000Z"
+}
+```
+
+Le chemin canonique sert à éviter les doublons.
+
+Le tri d’affichage est fondé sur `lastOpenedAt`, la plus récemment utilisée en premier.
+
+## Aucune purge automatique
+
+Une bibliothèque connue ne disparaît jamais simplement parce qu’elle est ancienne ou parce qu’une limite arbitraire a été atteinte.
+
+Même si l’historique contient un jour plusieurs dizaines d’entrées :
+
+```text
+aucune purge automatique
+```
+
+Textothèque ne décide pas d’oublier à la place de l’utilisateur.
+
+Un retrait éventuel sera toujours volontaire.
+
+## Stockage du registre
+
+Le registre appartient à l’application Textothèque, pas à une bibliothèque particulière.
+
+Il ne doit donc pas être stocké :
+
+- dans une bibliothèque SQLite ;
+- dans les données métier des documents.
+
+Décision retenue :
+
+```text
+profil Textothèque
+→ petit fichier de préférences local
+→ par exemple library-history.json
+```
+
+Emplacement conceptuel :
+
+```text
+%APPDATA%\Textotheque\library-history.json
+```
+
+Le nom exact pourra être ajusté lors de l’implémentation.
+
+Aucune dépendance n’est nécessaire : quelques données JSON suffisent.
+
+L’écriture doit rester simple et robuste ; ne pas construire un gestionnaire de configuration général uniquement pour ce registre.
+
+---
+
+# 18. Bibliothèque connue devenue introuvable
+
+Si une bibliothèque enregistrée n’existe plus à son chemin :
+
+- ne pas la recréer automatiquement ;
+- ne pas la supprimer de l’historique ;
+- la conserver et l’indiquer comme `introuvable` ou indisponible ;
+- permettre plus tard un retrait volontaire.
 
 Exemple :
 
 ```text
-Récentes
-────────
-Textotheque.sqlite
-M2.sqlite
-Dev.sqlite
-Archives.sqlite
+Bibliothèques connues
+├── ✓ M2.sqlite
+├── Dev.sqlite
+└── Archives.sqlite   [introuvable]
 ```
 
-Cette liste est une préférence locale de l’application.
+Cliquer sur une entrée introuvable ne doit jamais créer une nouvelle base à cet emplacement.
 
-Elle ne fait pas partie des données métier d’une bibliothèque.
+Une future commande de gestion de l’historique pourra permettre :
 
-Un stockage type `localStorage` ou configuration applicative locale peut convenir selon l’architecture retenue.
+- retirer une entrée ;
+- éventuellement relocaliser une bibliothèque si un vrai besoin apparaît.
 
----
-
-# 17. Base manquante dans les récentes
-
-Si un chemin récent n’existe plus :
-
-- ne pas le recréer automatiquement ;
-- signaler simplement qu’il est indisponible ;
-- permettre de le retirer des récentes.
+Aucune de ces fonctions avancées n’est obligatoire pour le premier palier `0.1.18`.
 
 ---
 
-# 18. Différence entre backup, nouvelle base et ouverture
+# 19. Différence entre backup, nouvelle base et ouverture
 
 Ces concepts doivent rester très distincts.
 
@@ -693,6 +808,7 @@ Ces concepts doivent rester très distincts.
 ```text
 copie complète
 la base courante ne change pas
+le backup ne rejoint pas automatiquement l’historique
 ```
 
 ## Ouvrir une bibliothèque
@@ -700,6 +816,7 @@ la base courante ne change pas
 ```text
 la base courante change
 on travaille ensuite sur le fichier choisi
+si l’ouverture réussit, elle rejoint l’historique
 ```
 
 ## Nouvelle bibliothèque
@@ -707,59 +824,114 @@ on travaille ensuite sur le fichier choisi
 ```text
 crée un nouveau fichier Textothèque
 puis bascule dessus
+puis l’ajoute à l’historique
 ```
 
 Ne pas utiliser un libellé ambigu comme `Enregistrer sous` pour le backup.
 
 ---
 
-# 19. Roadmap fonctionnelle proposée
+# 19 bis. Réouverture au démarrage
+
+Décision retenue :
+
+> Textothèque tente de rouvrir au démarrage la dernière bibliothèque utilisée avec succès.
+
+Exemple :
+
+```text
+jour 1
+→ travail sur M2.sqlite
+→ fermeture
+
+jour 2
+→ lancement Textothèque
+→ M2.sqlite rouverte
+```
+
+Le registre durable fournit le chemin de cette dernière bibliothèque.
+
+## Si la dernière bibliothèque est absente ou impossible à ouvrir
+
+Comportement cible :
+
+```text
+tentative dernière bibliothèque
+→ indisponible / invalide
+→ fallback vers bibliothèque par défaut
+→ message utilisateur discret
+```
+
+La bibliothèque indisponible reste dans l’historique avec son état `introuvable` ou son diagnostic approprié.
+
+Ne pas boucler indéfiniment sur une bibliothèque impossible à ouvrir.
+
+La bibliothèque par défaut du profil Textothèque reste le parachute de démarrage :
+
+```text
+%APPDATA%\Textotheque\textotheque.sqlite
+```
+
+---
+
+# 19 ter. Roadmap fonctionnelle proposée
 
 ## 0.1.16 — Identité de bibliothèque + sauvegarde complète (réalisée)
 
-Objectifs :
+Objectifs réalisés :
 
-- choisir et documenter `application_id` ;
-- reconnaître une base Textothèque ;
-- adopter proprement les bases legacy existantes ;
-- exposer l’information de bibliothèque courante ;
-- ajouter `Sauvegarder une copie…` ;
+- `application_id` stable TEXO ;
+- reconnaissance d’une base Textothèque ;
+- adoption bornée des bases legacy ;
+- information sur la bibliothèque courante ;
 - snapshot SQLite cohérent ;
-- vérification légère du backup.
+- vérification du backup.
 
-Cette version doit fournir le **parachute** avant le multi-base.
+Cette version fournit le **parachute** avant le multi-base.
 
 ---
 
 ## 0.1.17 — Ouvrir une bibliothèque + migrations utilisateur (réalisée)
 
-Objectifs :
+Objectifs réalisés :
 
 - sélecteur de fichier ;
 - inspection sans modification ;
 - compatibilité ;
-- base ancienne détectée ;
-- proposition explicite de migration ;
+- proposition explicite de migration/adoption ;
 - backup automatique pré-migration ;
 - migration ;
-- refus propre des bases trop récentes ;
-- bascule de la DB courante ;
+- refus des bases trop récentes/étrangères/invalides ;
+- bascule atomique de la DB courante ;
 - dirty-state protégé.
 
-Choix réalisés : inspection SQLite en lecture seule avant toute mutation, backup pré-migration vérifié créé à côté de la bibliothèque candidate, puis bascule atomique de la connexion active seulement après ouverture et lectures de contrôle réussies. La bibliothèque choisie reste limitée à la session courante dans cette première étape.
+Choix réalisés :
+
+- inspection SQLite readonly avant toute mutation ;
+- backup pré-migration vérifié créé à côté du candidat ;
+- bascule de connexion seulement après ouverture et lectures de contrôle réussies ;
+- choix encore limité à la session pour cette étape.
 
 ---
 
-## 0.1.18 — Nouvelle bibliothèque + bases récentes
+## 0.1.18 — Gestion durable des bibliothèques
 
 Objectifs :
 
-- créer une nouvelle base Textothèque à l’emplacement choisi ;
-- initialiser identité + schéma courant ;
-- ouvrir automatiquement la nouvelle bibliothèque ;
-- mémoriser les bibliothèques récentes ;
-- bascule rapide ;
-- gérer proprement les chemins manquants.
+- créer `Nouvelle bibliothèque…` ;
+- inaugurer le menu racine `Bibliothèque` ;
+- déplacer progressivement les opérations occasionnelles de bibliothèque dans ce menu ;
+- maintenir un historique durable des bibliothèques connues ;
+- ne jamais purger automatiquement cet historique ;
+- marquer la bibliothèque courante ;
+- conserver les chemins introuvables au lieu de les oublier ;
+- mémoriser `firstOpenedAt` et `lastOpenedAt` ;
+- éviter les doublons par chemin canonique ;
+- rouvrir au démarrage la dernière bibliothèque utilisée avec succès ;
+- fallback propre vers la bibliothèque par défaut si nécessaire ;
+- permettre la bascule rapide vers une bibliothèque connue.
+
+Le registre est une préférence de l’application Textothèque, pas une donnée métier contenue dans une bibliothèque.
 
 ---
 
@@ -985,6 +1157,31 @@ Avant l’arrivée de migrations futures sur données réellement importantes, d
 - ou suivre une politique différente clairement documentée.
 
 Le comportement ne doit pas rester ambigu.
+
+
+## Menu de gestion des bibliothèques
+
+Décidé avant `0.1.18` : les opérations sur les bases SQLite vivent dans un menu racine `Bibliothèque`, séparé du futur menu `Fichier` consacré aux imports/exports documentaires.
+
+## Historique des bibliothèques
+
+Décidé avant `0.1.18` :
+
+- registre durable, pas simple liste tronquée de récentes ;
+- aucune purge automatique ;
+- ajout uniquement après ouverture réussie ;
+- backups et candidats refusés exclus du registre ;
+- doublons évités par chemin canonique ;
+- entrée absente conservée comme introuvable ;
+- retrait uniquement volontaire.
+
+Le registre doit rester une préférence applicative externe aux bibliothèques, stockée dans le profil Textothèque sous forme légère, par exemple `library-history.json`.
+
+## Réouverture au démarrage
+
+Décidé avant `0.1.18` : Textothèque tente de rouvrir la dernière bibliothèque utilisée avec succès.
+
+Si elle est indisponible ou impossible à ouvrir, l’application revient proprement à la bibliothèque par défaut et conserve l’entrée historique au lieu de l’effacer.
 
 ---
 
