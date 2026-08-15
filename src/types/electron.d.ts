@@ -20,7 +20,7 @@ declare global {
       renameFolder: (id: number, name: string) => Promise<Folder>;
       createDocument: (folderId?: number | null) => Promise<TextDocument>;
       getDocument: (id: number) => Promise<TextDocument | null>;
-      updateDocument: (id: number, input: DocumentInput) => Promise<TextDocument>;
+      updateDocument: (id: number, input: DocumentInput, expectedLibraryPath?: string) => Promise<TextDocument>;
       markOpened: (id: number) => Promise<TextDocument>;
       trashDocument: (id: number) => Promise<TextDocument>;
       restoreDocument: (id: number) => Promise<TextDocument>;

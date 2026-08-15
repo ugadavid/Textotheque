@@ -35,7 +35,7 @@ import {
   inspectLibrary,
   openLibrary,
 } from './services/library';
-import type { DocumentStatus, Folder, TextDocument } from './types/document';
+import type { DocumentInput, DocumentStatus, Folder, TextDocument } from './types/document';
 import type { LibraryInfo, LibraryInspection, LibraryMenuAction, LibraryOpenResult } from './types/library';
 
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
@@ -50,6 +50,15 @@ const LEGACY_PANE_STORAGE_KEY = 'textotheque:pane-widths:v1';
 const PANE_LAYOUT_STORAGE_KEY = 'textotheque:pane-layout:v2';
 const EXPANDED_FOLDERS_STORAGE_KEY = 'textotheque:expanded-folders:v2';
 const UNTITLED_FALLBACK = 'Sans titre';
+const AUTOSAVE_DELAY_MS = 1500;
+
+interface DocumentSaveSnapshot {
+  requestContext: number;
+  documentId: number;
+  libraryPath: string;
+  persistedFolderId: number | null;
+  input: DocumentInput;
+}
 
 interface PaneLayout {
   left: number;
@@ -115,6 +124,15 @@ function titleForEditing(title: string): string {
   return trimmedTitle === '' || trimmedTitle === UNTITLED_FALLBACK ? '' : title;
 }
 
+function sameDocumentInput(first: DocumentInput, second: DocumentInput): boolean {
+  return first.title === second.title &&
+    first.content === second.content &&
+    first.notes === second.notes &&
+    first.status === second.status &&
+    first.favorite === second.favorite &&
+    first.folder_id === second.folder_id;
+}
+
 export default function App() {
   const [documents, setDocuments] = useState<TextDocument[]>([]);
   const [deletedDocuments, setDeletedDocuments] = useState<TextDocument[]>([]);
@@ -140,6 +158,11 @@ export default function App() {
   const shellRef = useRef<HTMLElement | null>(null);
   const isDirtyRef = useRef(false);
   const libraryOperationRef = useRef(false);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const editorContextRef = useRef(0);
+  const nextSaveRequestRef = useRef(0);
+  const inFlightSaveRequestsRef = useRef(new Set<number>());
+  const latestDraftRef = useRef<DocumentSaveSnapshot | null>(null);
   const restoreHiddenNavigationAfterSearchRef = useRef(false);
 
   useEffect(() => {
@@ -227,7 +250,21 @@ export default function App() {
         favorite !== (selectedDocument.favorite === 1))
   );
   const displayedSaveState: SaveState =
-    saveState === 'saving' || saveState === 'error' ? saveState : isDirty ? 'dirty' : saveState;
+    saveState === 'saving' || saveState === 'error'
+      ? saveState
+      : isDirty
+        ? 'dirty'
+        : saveState === 'dirty'
+          ? 'saved'
+          : saveState;
+
+  latestDraftRef.current = selectedDocument && libraryInfo ? {
+    requestContext: editorContextRef.current,
+    documentId: selectedDocument.id,
+    libraryPath: libraryInfo.path,
+    persistedFolderId: selectedDocument.folder_id,
+    input: { title, content, notes, status, favorite, folder_id: folderId },
+  } : null;
 
   useEffect(() => {
     isDirtyRef.current = isDirty;
@@ -374,6 +411,18 @@ export default function App() {
     return activeDocuments;
   }
 
+  function clearAutosaveTimer(): void {
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+  }
+
+  function invalidateEditorContext(): void {
+    clearAutosaveTimer();
+    editorContextRef.current += 1;
+  }
+
   async function refreshDocuments(
     nextSelectedId?: number,
     viewOverride: DocumentView = documentView,
@@ -391,6 +440,7 @@ export default function App() {
     const nextCurrentDocuments = documentsForView(nextDocuments, nextDeletedDocuments, viewOverride, folderOverride);
 
     if (nextCurrentDocuments.length === 0) {
+      invalidateEditorContext();
       setSelectedDocument(null);
       setTitle('');
       setContent('');
@@ -408,6 +458,7 @@ export default function App() {
   }
 
   function applyDocument(document: TextDocument) {
+    invalidateEditorContext();
     setSelectedDocument(document);
     setTitle(titleForEditing(document.title));
     setContent(document.content);
@@ -556,59 +607,88 @@ export default function App() {
     }
   }
 
-  async function handleSave() {
-    if (!selectedDocument) {
-      return;
-    }
+  function captureCurrentSaveSnapshot(): DocumentSaveSnapshot | null {
+    const draft = latestDraftRef.current;
+    return draft ? { ...draft, input: { ...draft.input } } : null;
+  }
 
+  function snapshotStillTargetsCurrentContext(snapshot: DocumentSaveSnapshot): boolean {
+    return editorContextRef.current === snapshot.requestContext &&
+      latestDraftRef.current?.documentId === snapshot.documentId &&
+      latestDraftRef.current.libraryPath === snapshot.libraryPath;
+  }
+
+  async function persistCurrentDocument(snapshot: DocumentSaveSnapshot) {
+    const requestId = ++nextSaveRequestRef.current;
+    inFlightSaveRequestsRef.current.add(requestId);
     setSaveState('saving');
     setError(null);
 
     let saved: TextDocument;
     try {
-      saved = await saveDocument(selectedDocument.id, {
-        title,
-        content,
-        notes,
-        status,
-        favorite,
-        folder_id: folderId,
-      });
+      saved = await saveDocument(snapshot.documentId, snapshot.input, snapshot.libraryPath);
     } catch (saveError: unknown) {
+      inFlightSaveRequestsRef.current.delete(requestId);
+      if (!snapshotStillTargetsCurrentContext(snapshot)) return;
+      const newerRequestIsRunning = [...inFlightSaveRequestsRef.current].some((candidate) => candidate > requestId);
+      if (newerRequestIsRunning) return;
       setSaveState('error');
       showOperationError(
         'save-document',
         saveError,
-        folderId !== selectedDocument.folder_id
+        snapshot.input.folder_id !== snapshot.persistedFolderId
           ? 'Impossible d affecter ce document a ce dossier.'
           : 'Impossible de sauvegarder le document.'
       );
       return;
     }
 
-    let nextView = documentView;
-    let nextFolderId = selectedFolderId;
+    inFlightSaveRequestsRef.current.delete(requestId);
+    if (!snapshotStillTargetsCurrentContext(snapshot)) return;
 
-    if (documentView === 'folder' || documentView === 'unfiled') {
+    setSelectedDocument(saved);
+    setDocuments((current) => current.map((document) => document.id === saved.id ? saved : document));
+    setError(null);
+
+    const currentDraft = latestDraftRef.current;
+    const currentMatchesSnapshot = Boolean(currentDraft && sameDocumentInput(currentDraft.input, snapshot.input));
+    const newerRequestIsRunning = [...inFlightSaveRequestsRef.current].some((candidate) => candidate > requestId);
+
+    if (currentMatchesSnapshot && (documentView === 'folder' || documentView === 'unfiled')) {
       if (saved.folder_id === null) {
-        nextView = 'unfiled';
-        nextFolderId = null;
+        setDocumentView('unfiled');
+        setSelectedFolderId(null);
       } else {
-        nextView = 'folder';
-        nextFolderId = saved.folder_id;
+        setDocumentView('folder');
+        setSelectedFolderId(saved.folder_id);
       }
-      setDocumentView(nextView);
-      setSelectedFolderId(nextFolderId);
     }
 
-    applyDocument(saved);
-    setSaveState('saved');
-    try {
-      await refreshDocuments(saved.id, nextView, nextFolderId);
-    } catch (loadError: unknown) {
-      showOperationError('refresh-after-save-document', loadError, 'Document sauvegarde, mais actualisation impossible.');
-    }
+    setSaveState(newerRequestIsRunning ? 'saving' : currentMatchesSnapshot ? 'saved' : 'dirty');
   }
+
+  async function handleSave() {
+    clearAutosaveTimer();
+    const snapshot = captureCurrentSaveSnapshot();
+    if (!snapshot || selectedDocumentIsDeleted) return;
+    await persistCurrentDocument(snapshot);
+  }
+
+  useEffect(() => {
+    clearAutosaveTimer();
+    if (!isDirty || !selectedDocument || selectedDocumentIsDeleted || !libraryInfo || saveState === 'saving' || saveState === 'error') {
+      return;
+    }
+
+    const snapshot = captureCurrentSaveSnapshot();
+    if (!snapshot) return;
+    autosaveTimerRef.current = setTimeout(() => {
+      autosaveTimerRef.current = null;
+      void persistCurrentDocument(snapshot);
+    }, AUTOSAVE_DELAY_MS);
+
+    return clearAutosaveTimer;
+  }, [content, favorite, folderId, isDirty, libraryInfo?.path, notes, saveState, selectedDocument?.id, selectedDocumentIsDeleted, status, title]);
 
   async function handleBackupLibrary() {
     if (isDirtyRef.current) {
@@ -665,6 +745,7 @@ export default function App() {
   }
 
   function clearWorkspaceForLibrarySwitch(nextLibrary: LibraryInfo): void {
+    invalidateEditorContext();
     setDocuments([]);
     setDeletedDocuments([]);
     setFolders([]);

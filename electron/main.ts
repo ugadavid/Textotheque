@@ -149,9 +149,13 @@ function registerIpcHandlers(): void {
   registerIpcHandler('folders:rename', (_event, id: number, name: string) => getDatabase().renameFolder(id, name));
   registerIpcHandler('documents:create', (_event, folderId: number | null) => getDatabase().createDocument(folderId));
   registerIpcHandler('documents:get', (_event, id: number) => getDatabase().getDocument(id));
-  registerIpcHandler('documents:update', (_event, id: number, input: DocumentInput) =>
-    getDatabase().updateDocument(id, input)
-  );
+  registerIpcHandler('documents:update', (_event, id: number, input: DocumentInput, expectedLibraryPath?: string) => {
+    const database = getDatabase();
+    if (expectedLibraryPath && !database.isCurrentLibraryPath(expectedLibraryPath)) {
+      throw new Error('Le contexte de bibliothèque de la sauvegarde a changé.');
+    }
+    return database.updateDocument(id, input);
+  });
   registerIpcHandler('documents:mark-opened', (_event, id: number) => getDatabase().markOpened(id));
   registerIpcHandler('documents:trash', (_event, id: number) => getDatabase().trashDocument(id));
   registerIpcHandler('documents:restore', (_event, id: number) => getDatabase().restoreDocument(id));

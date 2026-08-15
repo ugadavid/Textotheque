@@ -26,8 +26,8 @@ const api = {
   createDocument: (folderId: number | null = null): Promise<TextDocument> =>
     ipcRenderer.invoke('documents:create', folderId),
   getDocument: (id: number): Promise<TextDocument | null> => ipcRenderer.invoke('documents:get', id),
-  updateDocument: (id: number, input: DocumentInput): Promise<TextDocument> =>
-    ipcRenderer.invoke('documents:update', id, input),
+  updateDocument: (id: number, input: DocumentInput, expectedLibraryPath?: string): Promise<TextDocument> =>
+    ipcRenderer.invoke('documents:update', id, input, expectedLibraryPath),
   markOpened: (id: number): Promise<TextDocument> => ipcRenderer.invoke('documents:mark-opened', id),
   trashDocument: (id: number): Promise<TextDocument> => ipcRenderer.invoke('documents:trash', id),
   restoreDocument: (id: number): Promise<TextDocument> => ipcRenderer.invoke('documents:restore', id),

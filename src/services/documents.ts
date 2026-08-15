@@ -28,8 +28,8 @@ export async function selectDocument(id: number): Promise<TextDocument | null> {
   return window.textotheque.markOpened(id);
 }
 
-export async function saveDocument(id: number, input: DocumentInput): Promise<TextDocument> {
-  return window.textotheque.updateDocument(id, input);
+export async function saveDocument(id: number, input: DocumentInput, expectedLibraryPath?: string): Promise<TextDocument> {
+  return window.textotheque.updateDocument(id, input, expectedLibraryPath);
 }
 
 export async function trashDocument(id: number): Promise<TextDocument> {
