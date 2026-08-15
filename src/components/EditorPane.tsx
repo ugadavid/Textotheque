@@ -8,8 +8,11 @@ interface EditorPaneProps {
   isDirty: boolean;
   error: string | null;
   isDeleted: boolean;
+  searchQuery: string;
   onTitleChange: (value: string) => void;
   onContentChange: (value: string) => void;
+  onSearchChange: (value: string) => void;
+  onClearSearch: () => void;
   onSave: () => void;
   onTrash: () => void;
   onRestore: () => void;
@@ -31,37 +34,44 @@ export default function EditorPane({
   isDirty,
   error,
   isDeleted,
+  searchQuery,
   onTitleChange,
   onContentChange,
+  onSearchChange,
+  onClearSearch,
   onSave,
   onTrash,
   onRestore,
 }: EditorPaneProps) {
-  if (!document) {
-    return (
-      <section className="pane editor-pane empty-editor">
-        <h2>Aucun document selectionne</h2>
-        <p>Creez un premier texte depuis le volet gauche.</p>
-        {error ? <p className="error-message">{error}</p> : null}
-      </section>
-    );
-  }
-
   return (
     <section className="pane editor-pane">
       <header className="editor-toolbar">
         <div className="title-row">
-          {isDirty ? <span className="title-dirty-marker" aria-label="Modifications non sauvegardees">*</span> : null}
-          <input
-            className="title-input"
-            value={title}
-            onChange={(event) => onTitleChange(event.target.value)}
-            placeholder="Sans titre"
-            aria-label="Titre du document"
-            disabled={isDeleted}
-          />
+          {document ? <>
+            {isDirty ? <span className="title-dirty-marker" aria-label="Modifications non sauvegardees">*</span> : null}
+            <input
+              className="title-input"
+              value={title}
+              onChange={(event) => onTitleChange(event.target.value)}
+              placeholder="Sans titre"
+              aria-label="Titre du document"
+              disabled={isDeleted}
+            />
+          </> : <span className="toolbar-empty-title">Aucun document sélectionné</span>}
         </div>
-        <div className="save-controls">
+        <div className="toolbar-search search-input-row">
+          <span className="search-icon" aria-hidden="true">⌕</span>
+          <input
+            type="search"
+            value={searchQuery}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder="Rechercher dans Textothèque..."
+            aria-label="Rechercher dans Textothèque"
+            title="Rechercher - Ctrl+F"
+          />
+          {searchQuery.trim() ? <button className="clear-search-button" type="button" onClick={onClearSearch} title="Vider la recherche" aria-label="Vider la recherche">×</button> : null}
+        </div>
+        {document ? <div className="save-controls">
           <span className={`save-state ${saveState}`}>{saveLabels[saveState]}</span>
           {isDeleted ? (
             <button className="primary-button" type="button" onClick={onRestore}>
@@ -83,19 +93,21 @@ export default function EditorPane({
               </button>
             </>
           )}
-        </div>
+        </div> : <div className="save-controls toolbar-empty-actions" />}
       </header>
 
       {error ? <p className="error-message">{error}</p> : null}
-
-      <textarea
-        className="content-editor"
-        value={content}
-        onChange={(event) => onContentChange(event.target.value)}
-        placeholder="Ecrire ici..."
-        spellCheck="true"
-        disabled={isDeleted}
-      />
+      {document ? <textarea
+          className="content-editor"
+          value={content}
+          onChange={(event) => onContentChange(event.target.value)}
+          placeholder="Ecrire ici..."
+          spellCheck="true"
+          disabled={isDeleted}
+        /> : <div className="empty-editor-content">
+          <h2>Aucun document sélectionné</h2>
+          <p>Créez un texte ou choisissez-en un dans la bibliothèque.</p>
+        </div>}
     </section>
   );
 }

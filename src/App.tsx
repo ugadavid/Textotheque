@@ -29,7 +29,7 @@ import type { DocumentStatus, Folder, TextDocument } from './types/document';
 
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 type ResizeTarget = 'left' | 'right';
-type DocumentView = 'all' | 'unfiled' | 'folder' | 'trash';
+type DocumentView = 'navigation' | 'all' | 'unfiled' | 'folder' | 'trash';
 
 const UNSAVED_CHANGES_MESSAGE =
   'Ce document contient des modifications non sauvegardees. Voulez-vous vraiment continuer sans sauvegarder ?';
@@ -86,7 +86,7 @@ export default function App() {
   const [documents, setDocuments] = useState<TextDocument[]>([]);
   const [deletedDocuments, setDeletedDocuments] = useState<TextDocument[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
-  const [documentView, setDocumentView] = useState<DocumentView>('all');
+  const [documentView, setDocumentView] = useState<DocumentView>('navigation');
   const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null);
   const [selectedDocument, setSelectedDocument] = useState<TextDocument | null>(null);
   const [title, setTitle] = useState('');
@@ -151,20 +151,20 @@ export default function App() {
     if (documentView === 'folder') {
       return selectedFolder ? `Dossier: ${selectedFolder.name}` : 'Dossier';
     }
-    return 'Tous les textes';
+    return documentView === 'all' ? 'Tous les textes' : 'Bibliothèque';
   }, [documentView, selectedFolder]);
   const visibleDocuments = useMemo(() => {
     const normalizedSearch = searchQuery.trim().toLocaleLowerCase('fr-FR');
     if (!normalizedSearch) {
-      return currentDocuments;
+      return documents;
     }
 
-    return currentDocuments.filter((document) => {
+    return documents.filter((document) => {
       const titleValue = (document.title.trim() || UNTITLED_FALLBACK).toLocaleLowerCase('fr-FR');
       const contentValue = document.content.toLocaleLowerCase('fr-FR');
       return titleValue.includes(normalizedSearch) || contentValue.includes(normalizedSearch);
     });
-  }, [currentDocuments, searchQuery]);
+  }, [documents, searchQuery]);
   const selectedDocumentIsDeleted = Boolean(selectedDocument?.deleted_at);
   const isDirty = Boolean(
     selectedDocument &&
@@ -397,7 +397,7 @@ export default function App() {
         : selectedDocument && !selectedDocumentIsDeleted
           ? selectedDocument.folder_id
           : null;
-    const targetView = targetFolderId === null ? 'all' : 'folder';
+    const targetView = targetFolderId === null ? 'unfiled' : 'folder';
 
     setError(null);
     let document: TextDocument;
@@ -631,6 +631,24 @@ export default function App() {
     }
   }
 
+  function clearSearchAndReturnToNavigation() {
+    setSearchQuery('');
+    if (!selectedDocument || selectedDocument.deleted_at) {
+      setDocumentView('navigation');
+      setSelectedFolderId(null);
+      return;
+    }
+
+    if (selectedDocument.folder_id === null) {
+      setDocumentView('unfiled');
+      setSelectedFolderId(null);
+      return;
+    }
+
+    setDocumentView('folder');
+    setSelectedFolderId(selectedDocument.folder_id);
+  }
+
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       const key = event.key.toLowerCase();
@@ -663,14 +681,9 @@ export default function App() {
           return;
         }
 
-        const activeElement = document.activeElement;
-        if (
-          activeElement instanceof HTMLInputElement &&
-          activeElement.matches('.search-input-row input') &&
-          searchQuery.trim().length > 0
-        ) {
+        if (searchQuery.trim().length > 0) {
           event.preventDefault();
-          setSearchQuery('');
+          clearSearchAndReturnToNavigation();
         }
         return;
       }
@@ -741,8 +754,9 @@ export default function App() {
         }
       >
         <NavigationPane
-          documents={visibleDocuments}
+          searchResults={visibleDocuments}
           allDocuments={documents}
+          deletedDocuments={deletedDocuments}
           folders={folders}
           currentView={documentView}
           selectedFolderId={selectedFolderId}
@@ -750,13 +764,10 @@ export default function App() {
           unfiledCount={unfiledCount}
           folderDocumentCounts={folderDocumentCounts}
           trashCount={deletedDocuments.length}
-          totalDocuments={currentDocuments.length}
           searchQuery={searchQuery}
           selectedDocumentId={selectedDocument?.id ?? null}
           dirtyDocumentId={isDirty ? selectedDocument?.id ?? null : null}
           onViewChange={handleChangeDocumentView}
-          onSearchChange={setSearchQuery}
-          onClearSearch={() => setSearchQuery('')}
           onCreateDocument={handleCreateDocument}
           onCreateFolder={handleCreateFolder}
           onRenameFolder={handleRenameFolder}
@@ -777,6 +788,7 @@ export default function App() {
           isDirty={isDirty}
           error={error}
           isDeleted={selectedDocumentIsDeleted}
+          searchQuery={searchQuery}
           onTitleChange={(value) => {
             setTitle(value);
             markDirty();
@@ -785,6 +797,8 @@ export default function App() {
             setContent(value);
             markDirty();
           }}
+          onSearchChange={setSearchQuery}
+          onClearSearch={clearSearchAndReturnToNavigation}
           onSave={handleSave}
           onTrash={handleTrashCurrentDocument}
           onRestore={handleRestoreCurrentDocument}
@@ -825,7 +839,7 @@ export default function App() {
       </main>
       <StatusBar
         totalDocuments={currentDocuments.length}
-        visibleDocuments={visibleDocuments.length}
+        visibleDocuments={searchQuery.trim() ? visibleDocuments.length : currentDocuments.length}
         searchQuery={searchQuery}
         currentView={documentView}
         contextLabel={viewContextLabel}

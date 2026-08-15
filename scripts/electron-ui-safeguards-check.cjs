@@ -178,13 +178,14 @@ app
     ipcMain.handle('app:approve-close', () => undefined);
 
     const window = new BrowserWindow({
-      width: 1280,
-      height: 820,
+      width: 1020,
+      height: 680,
       show: false,
       webPreferences: {
         preload: path.join(__dirname, '..', 'dist-electron', 'preload.cjs'),
         contextIsolation: true,
         nodeIntegration: false,
+        partition: `textotheque-ui-safeguards-${process.pid}`,
       },
     });
 
@@ -301,8 +302,18 @@ app
         );
         const searchInput = document.querySelector('.search-input-row input');
         if (!searchInput) throw new Error('search input missing');
+        if (window.innerWidth > 1020) throw new Error('reduced window test did not use the expected width');
+        if (document.querySelector('.navigation-pane .search-input-row')) {
+          throw new Error('search should not be rendered in the navigation pane');
+        }
+        if (!searchInput.closest('.editor-toolbar')) {
+          throw new Error('search should be rendered in the editor toolbar');
+        }
         const viewButtons = document.querySelectorAll('.nav-view-button');
-        if (viewButtons.length !== 3) throw new Error('document view buttons missing');
+        if (viewButtons.length !== 2) throw new Error('document view buttons missing');
+        if (expectedAppVersion !== '0.1.14') throw new Error('unexpected application version');
+        const initialExpandedState = JSON.parse(window.localStorage.getItem('textotheque:expanded-folders:v2') ?? '[]');
+        if (initialExpandedState.length !== 0) throw new Error('folders should be closed by default');
 
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
           .set.call(searchInput, 'ancien');
@@ -310,7 +321,9 @@ app
         await waitFor(() => document.querySelectorAll('.document-item').length === 0, 'active search excludes trash');
 
         document.querySelector('.clear-search-button').click();
-        await waitFor(() => document.querySelectorAll('.document-item').length >= 2, 'clear search restores active documents');
+        await waitFor(() => document.querySelector('.folder-section'), 'clear search returns to navigation');
+        clickView('Tous les textes');
+        await waitFor(() => document.querySelectorAll('.document-item').length >= 2, 'all documents restored after search');
 
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
           .set.call(searchInput, 'deuxieme');
@@ -330,7 +343,9 @@ app
         }
 
         document.querySelector('.clear-search-button').click();
-        await waitFor(() => document.querySelectorAll('.document-item').length >= 2, 'clear search restores all documents');
+        await waitFor(() => document.querySelector('.folder-section'), 'clear search restores navigation');
+        clickView('Tous les textes');
+        await waitFor(() => document.querySelectorAll('.document-item').length >= 2, 'all documents restored');
 
         const ctrlFResult = dispatchShortcut('f', { ctrlKey: true });
         if (!ctrlFResult.defaultPrevented || ctrlFResult.dispatchResult !== false) {
@@ -343,8 +358,9 @@ app
         await waitFor(() => document.querySelector('.search-input-row input').value === 'ancien', 'search text entered before escape');
         dispatchShortcut('Escape');
         await waitFor(() => document.querySelector('.search-input-row input').value === '', 'Escape clears focused search');
+        await waitFor(() => document.querySelector('.folder-section'), 'Escape returns to navigation');
 
-        document.querySelector('.folder-actions button').click();
+        document.querySelector('.folder-actions button[title="Nouveau dossier racine"]').click();
         await waitFor(() => document.querySelector('.folder-button')?.textContent.includes('Nouveau dossier'), 'folder created');
         await waitFor(() => document.querySelector('.status-bar')?.textContent.includes('Dossier: Nouveau dossier'), 'folder status context');
         document.querySelector('.folder-rename-button').click();
@@ -373,12 +389,17 @@ app
         await waitFor(() => document.querySelector('.title-dirty-marker'), 'folder assignment marks document dirty');
         document.querySelector('.primary-button').click();
         await waitFor(() => !document.querySelector('.title-dirty-marker'), 'folder assignment saved');
-        document.querySelector('.folder-button').click();
+        document.querySelector('.navigation-home').click();
+        await waitFor(() => document.querySelector('.folder-section'), 'navigation restored after all texts');
+        findButtonByText('.folder-button', 'Notes memoire').click();
         await waitFor(() => document.querySelector('.status-bar')?.textContent.includes('Dossier: Notes memoire'), 'folder view selected');
         await waitFor(
           () => folderTreeText().includes('Premier document'),
           'folder tree includes assigned document'
         );
+        if (document.querySelector('.document-list')) {
+          throw new Error('normal navigation should not duplicate documents in a separate list');
+        }
         if (folderTreeText().includes('Deuxieme document')) {
           throw new Error('folder tree should not include unfiled document');
         }
@@ -411,7 +432,7 @@ app
         if (!document.querySelector('.folder-button')?.textContent.includes('3')) {
           throw new Error('folder direct document counter did not update');
         }
-        document.querySelectorAll('.folder-actions button')[1].click();
+        document.querySelector('.folder-actions button[title="Nouveau sous-dossier"]').click();
         await waitFor(() => Array.from(document.querySelectorAll('.folder-button')).some((item) => item.textContent.includes('Nouveau dossier')), 'subfolder created');
         dispatchShortcut('n', { ctrlKey: true });
         await waitFor(() => document.querySelector('.title-input')?.value === '', 'Ctrl+N creates empty document in subfolder');
@@ -445,9 +466,9 @@ app
         if (!parentFolderRow().querySelector('.folder-button')?.textContent.includes('3')) {
           throw new Error('collapsed folder should keep direct document counter visible');
         }
-        const collapsedState = JSON.parse(window.localStorage.getItem('textotheque:collapsed-folders:v1') ?? '[]');
-        if (!collapsedState.includes(1)) {
-          throw new Error('collapsed folder state was not persisted in localStorage');
+        const expandedAfterCollapse = JSON.parse(window.localStorage.getItem('textotheque:expanded-folders:v2') ?? '[]');
+        if (expandedAfterCollapse.includes(1)) {
+          throw new Error('collapsed folder should be removed from expanded localStorage state');
         }
         if (document.querySelector('.title-input').value !== titleBeforeToggle) {
           throw new Error('folder toggle should not open another document');
@@ -455,13 +476,17 @@ app
         parentFolderRow().querySelector('.folder-toggle-button').click();
         await waitFor(() => folderTreeText().includes('Doc bouton dossier'), 'expanded folder shows direct documents again');
         await waitFor(() => folderTreeText().includes('Nouveau dossier'), 'expanded folder shows subfolder again');
+        document.querySelector('.collapse-all-folders').click();
+        await waitFor(() => !folderTreeText().includes('Doc bouton dossier'), 'collapse all hides folder documents');
+        document.querySelector('.expand-all-folders').click();
+        await waitFor(() => folderTreeText().includes('Doc sous dossier'), 'expand all shows descendants');
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
           .set.call(document.querySelector('.search-input-row input'), 'Doc bouton');
         document.querySelector('.search-input-row input').dispatchEvent(new Event('input', { bubbles: true }));
-        await waitFor(() => document.querySelectorAll('.document-item').length === 1, 'search respects folder view');
+        await waitFor(() => document.querySelectorAll('.document-item').length === 1, 'global search from folder view');
         document.querySelector('.clear-search-button').click();
-        await waitFor(() => findButtonByText('.nav-view-button', 'Non classes'), 'unfiled tree section visible after search');
-        clickView('Non classes');
+        await waitFor(() => document.querySelector('.unfiled-tree-section'), 'unfiled tree section visible after search');
+        document.querySelector('.pseudo-folder-row .folder-button').click();
         await waitFor(
           () => unfiledTreeText().includes('Deuxieme document'),
           'unfiled tree includes unfiled document'
@@ -475,14 +500,22 @@ app
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
           .set.call(document.querySelector('.search-input-row input'), 'Premier');
         document.querySelector('.search-input-row input').dispatchEvent(new Event('input', { bubbles: true }));
-        await waitFor(() => document.querySelectorAll('.document-item').length === 0, 'search respects unfiled view');
+        await waitFor(() => document.querySelectorAll('.document-item').length === 1, 'search is global from unfiled view');
+        if (!document.querySelector('.document-item')?.textContent.includes('Premier document')) {
+          throw new Error('global search did not find foldered document from unfiled view');
+        }
         document.querySelector('.clear-search-button').click();
+        await waitFor(() => findButtonByText('.nav-view-button', 'Tous les textes'), 'view buttons restored after global search');
         clickView('Tous les textes');
         await waitFor(() => document.querySelectorAll('.document-item').length >= 2, 'all view restored after folder tests');
         Array.from(document.querySelectorAll('.document-item'))
           .find((item) => item.textContent.includes('Premier document'))
           .click();
         await waitFor(() => document.querySelector('.title-input')?.value === 'Premier document', 'first document selected after folder tests');
+        document.querySelector('.navigation-home').click();
+        await waitFor(() => folderTreeText().includes('Premier document'), 'selected document path reopened in navigation');
+        clickView('Tous les textes');
+        await waitFor(() => document.querySelectorAll('.document-item').length >= 2, 'all view reopened after reveal check');
 
         const firstTitle = document.querySelector('.title-input');
         const editor = document.querySelector('.content-editor');
@@ -578,9 +611,14 @@ app
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
           .set.call(document.querySelector('.search-input-row input'), 'premier');
         document.querySelector('.search-input-row input').dispatchEvent(new Event('input', { bubbles: true }));
-        await waitFor(() => document.querySelectorAll('.document-item').length === 0, 'trash search excludes active');
+        await waitFor(() => document.querySelectorAll('.document-item').length === 1, 'search remains global from trash');
+        if (!document.querySelector('.document-item')?.textContent.includes('Premier document')) {
+          throw new Error('global search from trash did not return active document');
+        }
         document.querySelector('.clear-search-button').click();
-        await waitFor(() => document.querySelectorAll('.document-item').length >= 2, 'trash search clear restores trash');
+        await waitFor(() => document.querySelector('.folder-section'), 'trash search clear returns navigation');
+        clickView('Corbeille');
+        await waitFor(() => document.querySelectorAll('.document-item').length >= 2, 'trash view restored explicitly');
         Array.from(document.querySelectorAll('.document-item'))
           .find((item) => item.textContent.includes('Deuxieme document'))
           .click();
@@ -658,7 +696,7 @@ app
         if (document.querySelector('.title-input').placeholder !== 'Sans titre') {
           throw new Error('Untitled fallback is not used as title placeholder');
         }
-        await waitFor(() => document.querySelector('.document-item .document-title').textContent.includes('Sans titre'), 'untitled fallback visible in navigation');
+        await waitFor(() => document.querySelector('.unfiled-tree-section')?.textContent.includes('Sans titre'), 'untitled fallback visible in navigation');
         const newTitleInput = document.querySelector('.title-input');
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
           .set.call(newTitleInput, 'Titre saisi directement');
@@ -669,11 +707,11 @@ app
         await waitFor(() => !document.querySelector('.title-dirty-marker'), 'new title saved');
 
         return { ok: true };
-      })()
+      })().catch((error) => ({ ok: false, errorStack: error.stack }))
     `);
 
     if (!result.ok) {
-      throw new Error('UI safeguards check failed.');
+      throw new Error(`UI safeguards check failed: ${result.errorStack ?? 'unknown error'}`);
     }
 
     forceFailures('documents:create');

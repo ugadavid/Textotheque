@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Folder, TextDocument } from '../types/document';
 
-const UNTITLED_FALLBACK = 'Sans titre';
-const COLLAPSED_FOLDERS_KEY = 'textotheque:collapsed-folders:v1';
-type DocumentView = 'all' | 'unfiled' | 'folder' | 'trash';
+const EXPANDED_FOLDERS_KEY = 'textotheque:expanded-folders:v2';
+type DocumentView = 'navigation' | 'all' | 'unfiled' | 'folder' | 'trash';
 
 interface NavigationPaneProps {
-  documents: TextDocument[];
+  searchResults: TextDocument[];
   allDocuments: TextDocument[];
+  deletedDocuments: TextDocument[];
   folders: Folder[];
   currentView: DocumentView;
   selectedFolderId: number | null;
@@ -15,13 +15,10 @@ interface NavigationPaneProps {
   unfiledCount: number;
   folderDocumentCounts: Record<number, number>;
   trashCount: number;
-  totalDocuments: number;
   searchQuery: string;
   selectedDocumentId: number | null;
   dirtyDocumentId: number | null;
   onViewChange: (view: DocumentView, folderId?: number | null) => void;
-  onSearchChange: (value: string) => void;
-  onClearSearch: () => void;
   onCreateDocument: () => void;
   onCreateFolder: (parentId: number | null) => void;
   onRenameFolder: (id: number, name: string) => void;
@@ -29,22 +26,19 @@ interface NavigationPaneProps {
   onEmptyTrash: () => void;
 }
 
-function formatDate(value: string | null): string {
-  if (!value) {
-    return 'Jamais ouvert';
+function loadExpandedFolderIds(): Set<number> {
+  try {
+    const value = window.localStorage.getItem(EXPANDED_FOLDERS_KEY);
+    const parsed = value ? JSON.parse(value) : [];
+    return Array.isArray(parsed) ? new Set(parsed.filter((id) => typeof id === 'number')) : new Set();
+  } catch {
+    return new Set();
   }
-  return new Intl.DateTimeFormat('fr-FR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(value));
 }
 
 function buildFolderRows(
   folders: Folder[],
-  collapsedFolderIds: Set<number>,
+  expandedIds: Set<number>,
   parentId: number | null = null,
   depth = 0
 ): Array<Folder & { depth: number }> {
@@ -52,102 +46,78 @@ function buildFolderRows(
     .filter((folder) => folder.parent_id === parentId)
     .flatMap((folder) => [
       { ...folder, depth },
-      ...(collapsedFolderIds.has(folder.id) ? [] : buildFolderRows(folders, collapsedFolderIds, folder.id, depth + 1)),
+      ...(expandedIds.has(folder.id) ? buildFolderRows(folders, expandedIds, folder.id, depth + 1) : []),
     ]);
 }
 
+function folderAncestorIds(folders: Folder[], folderId: number): number[] {
+  const result: number[] = [];
+  let folder = folders.find((item) => item.id === folderId);
+  const visited = new Set<number>();
+  while (folder?.parent_id !== null && folder?.parent_id !== undefined && !visited.has(folder.id)) {
+    visited.add(folder.id);
+    result.unshift(folder.parent_id);
+    folder = folders.find((item) => item.id === folder?.parent_id);
+  }
+  return result;
+}
+
+function folderPath(folders: Folder[], folderId: number | null): string {
+  if (folderId === null) return 'Non classés';
+  const names: string[] = [];
+  let folder = folders.find((item) => item.id === folderId);
+  const visited = new Set<number>();
+  while (folder && !visited.has(folder.id)) {
+    visited.add(folder.id);
+    names.unshift(folder.name);
+    folder = folders.find((item) => item.id === folder?.parent_id);
+  }
+  return names.join(' / ') || 'Dossier inconnu';
+}
+
 function displayTitle(document: TextDocument): string {
-  return document.title.trim() || UNTITLED_FALLBACK;
+  return document.title.trim() || 'Sans titre';
 }
 
-function loadCollapsedFolderIds(): Set<number> {
-  try {
-    const stored = window.localStorage.getItem(COLLAPSED_FOLDERS_KEY);
-    const parsed = stored ? JSON.parse(stored) : [];
-    return Array.isArray(parsed) ? new Set(parsed.filter((id) => typeof id === 'number')) : new Set();
-  } catch {
-    return new Set();
-  }
-}
-
-function folderAncestorIds(folders: Folder[], folderId: number | null): number[] {
-  const ancestors: number[] = [];
-  let currentFolder = folders.find((folder) => folder.id === folderId) ?? null;
-
-  while (currentFolder?.parent_id !== null && currentFolder?.parent_id !== undefined) {
-    ancestors.unshift(currentFolder.parent_id);
-    currentFolder = folders.find((folder) => folder.id === currentFolder?.parent_id) ?? null;
-  }
-
-  return ancestors;
-}
-
-export default function NavigationPane({
-  documents,
-  allDocuments,
-  folders,
-  currentView,
-  selectedFolderId,
-  activeCount,
-  unfiledCount,
-  folderDocumentCounts,
-  trashCount,
-  totalDocuments,
-  searchQuery,
-  selectedDocumentId,
-  dirtyDocumentId,
-  onViewChange,
-  onSearchChange,
-  onClearSearch,
-  onCreateDocument,
-  onCreateFolder,
-  onRenameFolder,
-  onSelectDocument,
-  onEmptyTrash,
-}: NavigationPaneProps) {
+export default function NavigationPane(props: NavigationPaneProps) {
+  const {
+    searchResults, allDocuments, deletedDocuments, folders, currentView, selectedFolderId,
+    activeCount, unfiledCount, folderDocumentCounts, trashCount, searchQuery,
+    selectedDocumentId, dirtyDocumentId, onViewChange, onCreateDocument, onCreateFolder,
+    onRenameFolder, onSelectDocument, onEmptyTrash,
+  } = props;
   const [editingFolderId, setEditingFolderId] = useState<number | null>(null);
   const [editingFolderName, setEditingFolderName] = useState('');
-  const [collapsedFolderIds, setCollapsedFolderIds] = useState<Set<number>>(() => loadCollapsedFolderIds());
+  const [expandedFolderIds, setExpandedFolderIds] = useState<Set<number>>(loadExpandedFolderIds);
+  const [isUnfiledExpanded, setIsUnfiledExpanded] = useState(false);
   const hasSearch = searchQuery.trim().length > 0;
-  const folderRows = useMemo(() => buildFolderRows(folders, collapsedFolderIds), [collapsedFolderIds, folders]);
-  const currentFolder = folders.find((folder) => folder.id === selectedFolderId) ?? null;
+  const isNavigationMode = !hasSearch && ['navigation', 'folder', 'unfiled'].includes(currentView);
+  const folderRows = useMemo(() => buildFolderRows(folders, expandedFolderIds), [folders, expandedFolderIds]);
   const unfiledDocuments = allDocuments.filter((document) => document.folder_id === null);
-  const showClassicDocumentList = hasSearch || currentView === 'all' || currentView === 'trash';
-  const summaryLabel = hasSearch
-    ? 'Resultats'
-    : currentView === 'trash'
-      ? 'Corbeille'
-      : currentView === 'unfiled'
-        ? 'Non classes'
-        : currentView === 'folder'
-          ? currentFolder?.name ?? 'Dossier'
-          : 'Tous les textes';
 
   useEffect(() => {
-    window.localStorage.setItem(COLLAPSED_FOLDERS_KEY, JSON.stringify([...collapsedFolderIds]));
-  }, [collapsedFolderIds]);
+    window.localStorage.setItem(EXPANDED_FOLDERS_KEY, JSON.stringify([...expandedFolderIds]));
+  }, [expandedFolderIds]);
 
   useEffect(() => {
-    const selectedDocument = allDocuments.find((document) => document.id === selectedDocumentId) ?? null;
-    const folderToReveal = selectedDocument?.folder_id ?? selectedFolderId;
-    if (folderToReveal === null || folderToReveal === undefined) {
+    if (!isNavigationMode) return;
+    const selectedDocument = allDocuments.find((document) => document.id === selectedDocumentId);
+    const folderId = selectedDocument?.folder_id ?? selectedFolderId;
+    if (folderId === null || folderId === undefined) {
+      if (selectedDocument || currentView === 'unfiled') setIsUnfiledExpanded(true);
       return;
     }
-
-    const idsToOpen = [...folderAncestorIds(folders, folderToReveal), folderToReveal];
-    setCollapsedFolderIds((current) => {
-      if (idsToOpen.every((id) => !current.has(id))) {
-        return current;
-      }
-
+    const idsToOpen = [...folderAncestorIds(folders, folderId), folderId];
+    setExpandedFolderIds((current) => {
+      if (idsToOpen.every((id) => current.has(id))) return current;
       const next = new Set(current);
-      idsToOpen.forEach((id) => next.delete(id));
+      idsToOpen.forEach((id) => next.add(id));
       return next;
     });
-  }, [allDocuments, folders, selectedDocumentId, selectedFolderId]);
+  }, [allDocuments, currentView, folders, isNavigationMode, selectedDocumentId, selectedFolderId]);
 
   function toggleFolder(folderId: number) {
-    setCollapsedFolderIds((current) => {
+    setExpandedFolderIds((current) => {
       const next = new Set(current);
       if (next.has(folderId)) {
         next.delete(folderId);
@@ -158,259 +128,106 @@ export default function NavigationPane({
     });
   }
 
-  return (
-    <aside className="pane navigation-pane">
-      <div className="pane-header">
-        <div>
-          <p className="eyebrow">Textotheque</p>
-          <h1>Documents</h1>
-        </div>
-        <button className="icon-button" type="button" onClick={onCreateDocument} title="Nouveau document - Ctrl+N">
-          +
-        </button>
-      </div>
+  function markers(document: TextDocument) {
+    return <>
+      {dirtyDocumentId === document.id ? <span className="dirty-marker" title="Modifications non sauvegardées">*</span> : null}
+      {document.favorite ? <span className="favorite-marker" title="Favori">★</span> : null}
+    </>;
+  }
 
-      <div className="nav-summary">
-        <span>{summaryLabel}</span>
-        <strong>
-          {hasSearch ? `${documents.length}/${totalDocuments}` : totalDocuments}
-        </strong>
-      </div>
-
-      <div className="nav-view-switch" aria-label="Vue des documents">
-        <button
-          className={currentView === 'all' ? 'nav-view-button selected' : 'nav-view-button'}
+  function simpleList(source: TextDocument[], label: string, empty: string, view?: DocumentView) {
+    return <section className="navigation-mode" aria-label={label}>
+      <div className="navigation-mode-header"><span>{label}</span><strong>{source.length}</strong></div>
+      {source.length === 0 ? <p className="empty-state">{empty}</p> : <div className="document-list">
+        {source.map((document) => <button
+          className={document.id === selectedDocumentId ? 'document-item selected' : 'document-item'}
+          key={document.id}
           type="button"
-          onClick={() => onViewChange('all', null)}
+          onClick={() => onSelectDocument(document.id, view, null)}
         >
-          Tous les textes <span>{activeCount}</span>
-        </button>
-        <button
-          className={currentView === 'trash' ? 'nav-view-button selected' : 'nav-view-button'}
-          type="button"
-          onClick={() => onViewChange('trash', null)}
-        >
-          Corbeille <span>{trashCount}</span>
-        </button>
-      </div>
+          <span className="document-title"><span className="document-icon" aria-hidden="true" />{markers(document)}{displayTitle(document)}</span>
+          {!document.deleted_at ? <span className="document-path">{folderPath(folders, document.folder_id)}</span> : null}
+        </button>)}
+      </div>}
+    </section>;
+  }
 
-      {currentView === 'trash' ? (
-        <button
-          className="empty-trash-button"
-          type="button"
-          onClick={onEmptyTrash}
-          disabled={trashCount === 0}
-        >
-          Vider la corbeille
-        </button>
-      ) : null}
+  return <aside className="pane navigation-pane">
+    <div className="pane-header navigation-header">
+      <button className="navigation-home" type="button" onClick={() => onViewChange('navigation', null)} title="Retour à la navigation">
+        <span className="eyebrow">Textothèque</span><strong>Bibliothèque</strong>
+      </button>
+      <button className="icon-button" type="button" onClick={onCreateDocument} title="Nouveau document - Ctrl+N">+</button>
+    </div>
 
-      <section className="folder-section" aria-label="Dossiers virtuels">
-        <div className="folder-section-header">
-          <span>Dossiers</span>
-          <div className="folder-actions">
-            <button type="button" onClick={() => onCreateFolder(null)} title="Nouveau dossier racine">
-              +
-            </button>
-            {currentView === 'folder' && selectedFolderId !== null ? (
-              <button type="button" onClick={() => onCreateFolder(selectedFolderId)} title="Nouveau sous-dossier">
-                +/
-              </button>
-            ) : null}
-          </div>
-        </div>
-        {folderRows.length === 0 ? (
-          <p className="folder-empty">Aucun dossier.</p>
-        ) : (
-          <div className="folder-list">
+    {!hasSearch ? <div className="nav-view-switch" aria-label="Vue des documents">
+      <button className={currentView === 'all' ? 'nav-view-button selected' : 'nav-view-button'} type="button" onClick={() => onViewChange('all', null)}>
+        Tous les textes <span>{activeCount}</span>
+      </button>
+      <button className={currentView === 'trash' ? 'nav-view-button selected' : 'nav-view-button'} type="button" onClick={() => onViewChange('trash', null)}>
+        Corbeille <span>{trashCount}</span>
+      </button>
+    </div> : null}
+
+    <div className="navigation-scroll-region">
+      {hasSearch ? simpleList(searchResults, 'Résultats', 'Aucun document trouvé.') : null}
+      {!hasSearch && currentView === 'all' ? simpleList(allDocuments, 'Tous les textes', 'Aucun document pour le moment.', 'all') : null}
+      {!hasSearch && currentView === 'trash' ? <section className="navigation-mode" aria-label="Corbeille">
+        <div className="navigation-mode-header"><span>Corbeille</span><strong>{trashCount}</strong></div>
+        <button className="empty-trash-button" type="button" onClick={onEmptyTrash} disabled={trashCount === 0}>Vider la corbeille</button>
+        {simpleList(deletedDocuments, 'Documents supprimés', 'La corbeille est vide.', 'trash')}
+      </section> : null}
+
+      {isNavigationMode ? <>
+        <section className="folder-section" aria-label="Dossiers virtuels">
+          <div className="folder-section-header"><span>Dossiers</span><div className="folder-actions">
+            <button className="collapse-all-folders" type="button" onClick={() => setExpandedFolderIds(new Set())} title="Tout replier" aria-label="Tout replier">▸</button>
+            <button className="expand-all-folders" type="button" onClick={() => setExpandedFolderIds(new Set(folders.map((folder) => folder.id)))} title="Tout déplier" aria-label="Tout déplier">▾</button>
+            <button type="button" onClick={() => onCreateFolder(null)} title="Nouveau dossier racine">+</button>
+            {currentView === 'folder' && selectedFolderId !== null ? <button type="button" onClick={() => onCreateFolder(selectedFolderId)} title="Nouveau sous-dossier">+/</button> : null}
+          </div></div>
+          {folderRows.length === 0 ? <p className="folder-empty">Aucun dossier.</p> : <div className="folder-list">
             {folderRows.map((folder) => {
               const isSelected = currentView === 'folder' && selectedFolderId === folder.id;
-              const isEditing = editingFolderId === folder.id;
-              const isCollapsed = collapsedFolderIds.has(folder.id);
-              const documentCount = folderDocumentCounts[folder.id] ?? 0;
-              const folderDocuments = hasSearch
-                || isCollapsed
-                ? []
-                : allDocuments.filter((document) => document.folder_id === folder.id);
-
-              function startRename() {
-                setEditingFolderId(folder.id);
-                setEditingFolderName(folder.name);
-              }
-
-              function commitRename(nextName = editingFolderName) {
-                onRenameFolder(folder.id, nextName);
-                setEditingFolderId(null);
-                setEditingFolderName('');
-              }
-
-              return (
-                <div className="folder-row" key={folder.id}>
-                  {isEditing ? (
-                    <input
-                      className="folder-name-input"
-                      value={editingFolderName}
-                      autoFocus
-                      style={{ marginLeft: `${folder.depth * 14}px` }}
-                      onChange={(event) => setEditingFolderName(event.target.value)}
-                      onBlur={(event) => commitRename(event.currentTarget.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.currentTarget.blur();
-                        }
-                        if (event.key === 'Escape') {
-                          setEditingFolderId(null);
-                          setEditingFolderName('');
-                        }
-                      }}
-                    />
-                  ) : (
-                    <>
-                      <button
-                        className="folder-toggle-button"
-                        type="button"
-                        style={{ marginLeft: `${folder.depth * 14}px` }}
-                        onClick={() => toggleFolder(folder.id)}
-                        title={isCollapsed ? 'Deplier le dossier' : 'Replier le dossier'}
-                        aria-label={isCollapsed ? 'Deplier le dossier' : 'Replier le dossier'}
-                      >
-                        {isCollapsed ? '>' : 'v'}
-                      </button>
-                      <button
-                        className={isSelected ? 'folder-button selected' : 'folder-button'}
-                        type="button"
-                        onClick={() => onViewChange('folder', folder.id)}
-                        onDoubleClick={startRename}
-                        title="Double-clic pour renommer"
-                      >
-                        <span>{folder.depth > 0 ? '- ' : ''}{folder.name}</span>
-                        <strong>{documentCount}</strong>
-                      </button>
-                      {isSelected ? (
-                        <button className="folder-rename-button" type="button" onClick={startRename}>
-                          Renommer
-                        </button>
-                      ) : null}
-                    </>
-                  )}
-                  {folderDocuments.map((document) => {
-                    const isDocumentSelected = selectedDocumentId === document.id;
-                    const isDirty = dirtyDocumentId === document.id;
-
-                    return (
-                      <button
-                        className={
-                          isDocumentSelected
-                            ? 'tree-document-button selected'
-                            : 'tree-document-button'
-                        }
-                        key={document.id}
-                        type="button"
-                        style={{ marginLeft: `${18 + folder.depth * 14}px` }}
-                        onClick={() => onSelectDocument(document.id, 'folder', folder.id)}
-                      >
-                        <span>
-                          {isDirty ? <span className="dirty-marker">*</span> : null}
-                          {document.favorite ? '* ' : ''}
-                          {displayTitle(document)}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      {!hasSearch ? (
-        <section className="unfiled-tree-section" aria-label="Documents non classes">
-          <button
-            className={currentView === 'unfiled' ? 'nav-view-button selected' : 'nav-view-button'}
-            type="button"
-            onClick={() => onViewChange('unfiled', null)}
-          >
-            Non classes <span>{unfiledCount}</span>
-          </button>
-          <div className="tree-document-list">
-            {unfiledDocuments.length === 0 ? (
-              <p className="folder-empty">Aucun document non classe.</p>
-            ) : (
-              unfiledDocuments.map((document) => {
-                const isDocumentSelected = selectedDocumentId === document.id;
-                const isDirty = dirtyDocumentId === document.id;
-
-                return (
-                  <button
-                    className={isDocumentSelected ? 'tree-document-button selected' : 'tree-document-button'}
-                    key={document.id}
-                    type="button"
-                    onClick={() => onSelectDocument(document.id, 'unfiled', null)}
-                  >
-                    <span>
-                      {isDirty ? <span className="dirty-marker">*</span> : null}
-                      {document.favorite ? '* ' : ''}
-                      {displayTitle(document)}
-                    </span>
+              const isExpanded = expandedFolderIds.has(folder.id);
+              const folderDocuments = isExpanded ? allDocuments.filter((document) => document.folder_id === folder.id) : [];
+              const startRename = () => { setEditingFolderId(folder.id); setEditingFolderName(folder.name); };
+              const commitRename = (name = editingFolderName) => { onRenameFolder(folder.id, name); setEditingFolderId(null); setEditingFolderName(''); };
+              return <div className="folder-row" key={folder.id}>
+                {editingFolderId === folder.id ? <input
+                  className="folder-name-input" value={editingFolderName} autoFocus style={{ marginLeft: `${folder.depth * 18}px` }}
+                  onChange={(event) => setEditingFolderName(event.target.value)} onBlur={(event) => commitRename(event.currentTarget.value)}
+                  onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { setEditingFolderId(null); setEditingFolderName(''); } }}
+                /> : <>
+                  <button className="folder-toggle-button" type="button" style={{ marginLeft: `${folder.depth * 18}px` }} onClick={() => toggleFolder(folder.id)} title={isExpanded ? 'Replier le dossier' : 'Déplier le dossier'} aria-label={isExpanded ? 'Replier le dossier' : 'Déplier le dossier'}>{isExpanded ? '▾' : '▸'}</button>
+                  <button className={isSelected ? 'folder-button selected' : 'folder-button'} type="button" onClick={() => onViewChange('folder', folder.id)} onDoubleClick={startRename} title="Double-clic pour renommer">
+                    <span className="folder-label"><span className="folder-icon" aria-hidden="true" />{folder.name}</span><strong>{folderDocumentCounts[folder.id] ?? 0}</strong>
                   </button>
-                );
-              })
-            )}
-          </div>
+                  {isSelected ? <button className="folder-rename-button" type="button" onClick={startRename}>Renommer</button> : null}
+                </>}
+                {folderDocuments.map((document) => <button
+                  className={selectedDocumentId === document.id ? 'tree-document-button selected' : 'tree-document-button'} key={document.id} type="button"
+                  style={{ marginLeft: `${28 + folder.depth * 18}px` }} onClick={() => onSelectDocument(document.id, 'folder', folder.id)}
+                ><span className="document-icon" aria-hidden="true" />{markers(document)}<span className="tree-document-title">{displayTitle(document)}</span></button>)}
+              </div>;
+            })}
+          </div>}
         </section>
-      ) : null}
 
-      <label className="search-field">
-        <span>Recherche</span>
-        <div className="search-input-row">
-          <input
-            type="search"
-            value={searchQuery}
-            onChange={(event) => onSearchChange(event.target.value)}
-            placeholder="Titre ou contenu..."
-            aria-label="Rechercher dans les documents"
-            title="Rechercher - Ctrl+F"
-          />
-          {hasSearch ? (
-            <button className="clear-search-button" type="button" onClick={onClearSearch} title="Vider la recherche">
-              x
+        <section className="unfiled-tree-section" aria-label="Documents non classés">
+          <div className="pseudo-folder-row">
+            <button className="folder-toggle-button" type="button" onClick={() => setIsUnfiledExpanded((value) => !value)} title={isUnfiledExpanded ? 'Replier Non classés' : 'Déplier Non classés'} aria-label={isUnfiledExpanded ? 'Replier Non classés' : 'Déplier Non classés'}>{isUnfiledExpanded ? '▾' : '▸'}</button>
+            <button className={currentView === 'unfiled' ? 'folder-button selected' : 'folder-button'} type="button" onClick={() => onViewChange('unfiled', null)}>
+              <span className="folder-label"><span className="folder-icon" aria-hidden="true" />Non classés</span><strong>{unfiledCount}</strong>
             </button>
-          ) : null}
-        </div>
-      </label>
-
-      {showClassicDocumentList ? (
-        <div className="document-list" aria-label="Liste des documents">
-          {documents.length === 0 ? (
-            <p className="empty-state">
-              {hasSearch ? 'Aucun document trouve.' : currentView === 'trash' ? 'La corbeille est vide.' : 'Aucun document pour le moment.'}
-            </p>
-          ) : (
-            documents.map((document) => {
-              const isDirty = dirtyDocumentId === document.id;
-
-              return (
-                <button
-                  className={document.id === selectedDocumentId ? 'document-item selected' : 'document-item'}
-                  key={document.id}
-                  type="button"
-                  onClick={() => onSelectDocument(document.id)}
-                >
-                  <span className="document-title">
-                    {isDirty ? <span className="dirty-marker">*</span> : null}
-                    {document.favorite ? '* ' : ''}
-                    {displayTitle(document)}
-                  </span>
-                  <span className="document-meta">
-                    {document.status} - {formatDate(document.updated_at)}
-                  </span>
-                </button>
-              );
-            })
-          )}
-        </div>
-      ) : null}
-    </aside>
-  );
+          </div>
+          {isUnfiledExpanded ? <div className="tree-document-list">
+            {unfiledDocuments.length === 0 ? <p className="folder-empty">Aucun document non classé.</p> : unfiledDocuments.map((document) => <button
+              className={selectedDocumentId === document.id ? 'tree-document-button selected' : 'tree-document-button'} key={document.id} type="button" onClick={() => onSelectDocument(document.id, 'unfiled', null)}
+            ><span className="document-icon" aria-hidden="true" />{markers(document)}<span className="tree-document-title">{displayTitle(document)}</span></button>)}
+          </div> : null}
+        </section>
+      </> : null}
+    </div>
+  </aside>;
 }

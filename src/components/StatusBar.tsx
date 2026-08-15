@@ -1,6 +1,6 @@
 import type { DocumentStatus, TextDocument } from '../types/document';
 
-type DocumentView = 'all' | 'unfiled' | 'folder' | 'trash';
+type DocumentView = 'navigation' | 'all' | 'unfiled' | 'folder' | 'trash';
 
 interface StatusBarProps {
   totalDocuments: number;
