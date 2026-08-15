@@ -33,6 +33,8 @@ function persistDocument(id, input) {
 
 app.whenReady().then(async () => {
   ipcMain.handle('library:get-info', () => ({ ...libraryInfo }));
+  ipcMain.handle('file:set-export-available', () => undefined);
+  ipcMain.handle('file:export-text', () => ({ canceled: true, fileName: null }));
   ipcMain.handle('library:get-startup-notice', () => null);
   ipcMain.handle('library:backup', () => ({ canceled: true, path: null, fileName: null, error: null }));
   ipcMain.handle('library:choose-open', () => ({ status: 'canceled', inspection: null, library: null, backupPath: null }));

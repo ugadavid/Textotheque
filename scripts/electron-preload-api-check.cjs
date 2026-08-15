@@ -11,6 +11,14 @@ app
       userVersion: 2,
       isTextotheque: true,
     }));
+    let exportAvailable = false;
+    ipcMain.handle('file:set-export-available', (_event, available) => {
+      exportAvailable = available;
+    });
+    ipcMain.handle('file:export-text', (event, draft) => {
+      event.sender.send('file:menu-action', { action: 'export-text' });
+      return { canceled: false, fileName: `${draft.title}.txt` };
+    });
     ipcMain.handle('library:backup', () => ({ canceled: true, path: null, fileName: null, error: null }));
     ipcMain.handle('library:get-startup-notice', () => 'fallback temporaire');
     ipcMain.handle('library:choose-open', () => ({
@@ -103,6 +111,9 @@ app
         if (typeof api.chooseCreateLibrary !== 'function') return { ok: false, reason: 'chooseCreateLibrary missing' };
         if (typeof api.createLibrary !== 'function') return { ok: false, reason: 'createLibrary missing' };
         if (typeof api.onLibraryMenuAction !== 'function') return { ok: false, reason: 'onLibraryMenuAction missing' };
+        if (typeof api.exportTextDocument !== 'function') return { ok: false, reason: 'exportTextDocument missing' };
+        if (typeof api.setDocumentExportAvailable !== 'function') return { ok: false, reason: 'setDocumentExportAvailable missing' };
+        if (typeof api.onFileMenuAction !== 'function') return { ok: false, reason: 'onFileMenuAction missing' };
         if (typeof api.listDocuments !== 'function') return { ok: false, reason: 'listDocuments missing' };
         if (typeof api.listDeletedDocuments !== 'function') return { ok: false, reason: 'listDeletedDocuments missing' };
         if (typeof api.createDocument !== 'function') return { ok: false, reason: 'createDocument missing' };
@@ -124,6 +135,12 @@ app
         const chosenLibrary = await api.chooseOpenLibrary();
         const openedLibrary = await api.openLibrary(chosenLibrary.inspection.path, true);
         const inspectedLibrary = await api.inspectLibrary('C:\\temporary\\known.sqlite');
+        let fileMenuActionReceived = false;
+        const unsubscribeFileMenu = api.onFileMenuAction(() => { fileMenuActionReceived = true; });
+        await api.setDocumentExportAvailable(true);
+        const textExport = await api.exportTextDocument({ title: 'Brouillon', content: 'exact\\ncontent' });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        unsubscribeFileMenu();
         let receivedMenuAction = null;
         const unsubscribeMenu = api.onLibraryMenuAction((action) => { receivedMenuAction = action; });
         const createSelection = await api.chooseCreateLibrary();
@@ -158,6 +175,9 @@ app
             openedLibrary.library.fileName === 'other.sqlite' &&
             openedLibrary.backupPath.endsWith('pre-migration.sqlite') &&
             inspectedLibrary.status === 'compatible' &&
+            fileMenuActionReceived &&
+            textExport.canceled === false &&
+            textExport.fileName === 'Brouillon.txt' &&
             receivedMenuAction?.action === 'new' &&
             createdLibrary.status === 'created' &&
             createdLibrary.library.fileName === 'created.sqlite' &&
@@ -182,6 +202,9 @@ app
 
     if (!result.ok) {
       throw new Error(`Preload API check failed: ${result.reason}`);
+    }
+    if (!exportAvailable) {
+      throw new Error('Preload API check failed: export availability was not forwarded');
     }
 
     console.log('preload api ok');

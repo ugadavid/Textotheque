@@ -16,6 +16,12 @@ import { fileURLToPath } from 'node:url';
 import { DocumentInput, type TextothequeDatabase } from './database.js';
 import { ActiveLibraryManager, type LibraryMenuAction } from './library-manager.js';
 import { LibraryHistoryRegistry, type KnownLibrary } from './library-history.js';
+import {
+  suggestedTextExportFileName,
+  writeTextExport,
+  type TextExportDraft,
+  type TextExportResult,
+} from './text-export.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,6 +37,7 @@ let mainWindow: BrowserWindow | null = null;
 let libraryManager: ActiveLibraryManager | null = null;
 let libraryHistory: LibraryHistoryRegistry | null = null;
 let closeApproved = false;
+let documentExportAvailable = false;
 
 function getDatabasePath(): string {
   return process.env.TEXTOTHEQUE_DB_PATH ?? path.join(app.getPath('userData'), 'textotheque.sqlite');
@@ -142,6 +149,26 @@ function registerIpcHandlers(): void {
     const inspection = await library.backupTo(result.filePath);
     return { canceled: false, path: inspection.path, fileName: inspection.fileName, error: null };
   });
+  registerIpcHandler('file:export-text', async (_event, draft: TextExportDraft): Promise<TextExportResult> => {
+    const suggestedFileName = suggestedTextExportFileName(draft.title);
+    const options: SaveDialogOptions = {
+      title: 'Exporter le document en texte brut',
+      defaultPath: path.join(app.getPath('documents'), suggestedFileName),
+      buttonLabel: 'Exporter',
+      filters: [{ name: 'Fichier texte', extensions: ['txt'] }],
+      properties: ['showOverwriteConfirmation'],
+    };
+    const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return { canceled: true, fileName: null };
+
+    await writeTextExport(result.filePath, draft.content);
+    return { canceled: false, fileName: path.basename(result.filePath) };
+  });
+  registerIpcHandler('file:set-export-available', (_event, available: boolean) => {
+    if (documentExportAvailable === available) return;
+    documentExportAvailable = available;
+    refreshApplicationMenu();
+  });
   registerIpcHandler('documents:list', () => getDatabase().listDocuments());
   registerIpcHandler('documents:list-deleted', () => getDatabase().listDeletedDocuments());
   registerIpcHandler('folders:list', () => getDatabase().listFolders());
@@ -168,6 +195,10 @@ function registerIpcHandlers(): void {
 
 function sendLibraryMenuAction(action: LibraryMenuAction): void {
   mainWindow?.webContents.send('library:menu-action', action);
+}
+
+function sendFileMenuAction(): void {
+  mainWindow?.webContents.send('file:menu-action', { action: 'export-text' });
 }
 
 function knownLibraryLabels(libraries: KnownLibrary[]): Map<string, string> {
@@ -197,21 +228,32 @@ function refreshApplicationMenu(): void {
         click: () => sendLibraryMenuAction({ action: 'known', path: library.path }),
       }))
     : [{ label: 'Aucune bibliothèque connue', enabled: false }];
-  const template: MenuItemConstructorOptions[] = [{
-    label: 'Bibliothèque',
-    submenu: [
-      { label: 'Nouvelle bibliothèque…', click: () => sendLibraryMenuAction({ action: 'new' }) },
-      { label: 'Ouvrir une bibliothèque…', click: () => sendLibraryMenuAction({ action: 'open' }) },
-      { label: 'Bibliothèques connues', submenu: knownItems },
-      { type: 'separator' },
-      { label: 'Sauvegarder une copie…', click: () => sendLibraryMenuAction({ action: 'backup' }) },
-    ],
-  }];
+  const template: MenuItemConstructorOptions[] = [
+    {
+      label: 'Fichier',
+      submenu: [{
+        label: 'Exporter en texte (.txt)…',
+        enabled: documentExportAvailable,
+        click: sendFileMenuAction,
+      }],
+    },
+    {
+      label: 'Bibliothèque',
+      submenu: [
+        { label: 'Nouvelle bibliothèque…', click: () => sendLibraryMenuAction({ action: 'new' }) },
+        { label: 'Ouvrir une bibliothèque…', click: () => sendLibraryMenuAction({ action: 'open' }) },
+        { label: 'Bibliothèques connues', submenu: knownItems },
+        { type: 'separator' },
+        { label: 'Sauvegarder une copie…', click: () => sendLibraryMenuAction({ action: 'backup' }) },
+      ],
+    },
+  ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 async function createWindow(): Promise<void> {
   closeApproved = false;
+  documentExportAvailable = false;
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,

@@ -98,6 +98,8 @@ app
   .whenReady()
   .then(async () => {
     ipcMain.handle('library:get-info', () => ({ ...libraryInfo }));
+    ipcMain.handle('file:set-export-available', () => undefined);
+    ipcMain.handle('file:export-text', () => ({ canceled: true, fileName: null }));
     ipcMain.handle('library:get-startup-notice', () => null);
     ipcMain.handle('library:backup', (event) => {
       rejectIfForced('library:backup');
@@ -382,7 +384,7 @@ app
         }
         const viewButtons = document.querySelectorAll('.nav-view-button');
         if (viewButtons.length !== 2) throw new Error('document view buttons missing');
-        if (expectedAppVersion !== '0.1.19') throw new Error('unexpected application version');
+        if (expectedAppVersion !== '0.1.20') throw new Error('unexpected application version');
         const initialExpandedState = JSON.parse(window.localStorage.getItem('textotheque:expanded-folders:v2') ?? '[]');
         if (initialExpandedState.length !== 0) throw new Error('folders should be closed by default');
         await waitFor(() => window.localStorage.getItem('textotheque:pane-layout:v2'), 'pane layout stored');

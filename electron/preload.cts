@@ -1,5 +1,6 @@
 import type { DocumentInput, Folder, LibraryBackupResult, LibraryInfo, TextDocument } from './database.js';
 import type { LibraryCreateResult, LibraryCreateSelection, LibraryMenuAction, LibraryOpenResult } from './library-manager.js';
+import type { TextExportDraft, TextExportResult } from './text-export.js';
 
 const { contextBridge, ipcRenderer } = require('electron') as typeof import('electron');
 
@@ -17,6 +18,14 @@ const api = {
     const listener = (_event: Electron.IpcRendererEvent, action: LibraryMenuAction) => callback(action);
     ipcRenderer.on('library:menu-action', listener);
     return () => ipcRenderer.removeListener('library:menu-action', listener);
+  },
+  exportTextDocument: (draft: TextExportDraft): Promise<TextExportResult> => ipcRenderer.invoke('file:export-text', draft),
+  setDocumentExportAvailable: (available: boolean): Promise<void> =>
+    ipcRenderer.invoke('file:set-export-available', available),
+  onFileMenuAction: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('file:menu-action', listener);
+    return () => ipcRenderer.removeListener('file:menu-action', listener);
   },
   listDocuments: (): Promise<TextDocument[]> => ipcRenderer.invoke('documents:list'),
   listDeletedDocuments: (): Promise<TextDocument[]> => ipcRenderer.invoke('documents:list-deleted'),

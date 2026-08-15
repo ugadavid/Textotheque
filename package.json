@@ -1,7 +1,7 @@
 {
   "name": "textotheque",
   "productName": "Textotheque",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.js",
@@ -21,7 +21,8 @@
     "test:legacy-migration": "tsc -p electron/tsconfig.json && electron scripts/electron-legacy-migration-check.cjs",
     "test:library": "tsc -p electron/tsconfig.json && electron scripts/electron-library-check.cjs",
     "test:library-history": "tsc -p electron/tsconfig.json && electron scripts/electron-library-history-check.cjs",
-    "test:autosave": "npm run build && electron scripts/electron-autosave-check.cjs"
+    "test:autosave": "npm run build && electron scripts/electron-autosave-check.cjs",
+    "test:text-export": "npm run build && electron scripts/electron-text-export-check.cjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",

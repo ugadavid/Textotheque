@@ -35,8 +35,10 @@ import {
   inspectLibrary,
   openLibrary,
 } from './services/library';
+import { exportTextDocument, setDocumentExportAvailable } from './services/text-export';
 import type { DocumentInput, DocumentStatus, Folder, TextDocument } from './types/document';
 import type { LibraryInfo, LibraryInspection, LibraryMenuAction, LibraryOpenResult } from './types/library';
+import type { TextExportDraft } from './types/text-export';
 
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 type LibraryBackupState = 'idle' | 'saving' | 'success';
@@ -163,6 +165,7 @@ export default function App() {
   const nextSaveRequestRef = useRef(0);
   const inFlightSaveRequestsRef = useRef(new Set<number>());
   const latestDraftRef = useRef<DocumentSaveSnapshot | null>(null);
+  const latestTextExportRef = useRef<TextExportDraft | null>(null);
   const restoreHiddenNavigationAfterSearchRef = useRef(false);
 
   useEffect(() => {
@@ -265,10 +268,17 @@ export default function App() {
     persistedFolderId: selectedDocument.folder_id,
     input: { title, content, notes, status, favorite, folder_id: folderId },
   } : null;
+  latestTextExportRef.current = selectedDocument ? { title, content } : null;
 
   useEffect(() => {
     isDirtyRef.current = isDirty;
   }, [isDirty]);
+
+  useEffect(() => {
+    void setDocumentExportAvailable(Boolean(selectedDocument)).catch((availabilityError: unknown) => {
+      logRendererError('set-document-export-available', availabilityError);
+    });
+  }, [selectedDocument]);
 
   useEffect(() => {
     window.localStorage.setItem(PANE_LAYOUT_STORAGE_KEY, JSON.stringify(paneLayout));
@@ -717,6 +727,17 @@ export default function App() {
     }
   }
 
+  async function handleExportTextDocument(snapshot: TextExportDraft) {
+    try {
+      const result = await exportTextDocument(snapshot);
+      if (result.canceled) return;
+      setError(null);
+      setLibraryNotice(`Export texte créé : ${result.fileName ?? 'fichier texte'}.`);
+    } catch (exportError: unknown) {
+      showOperationError('export-text-document', exportError, 'Impossible d’exporter ce document.');
+    }
+  }
+
   function migrationMessage(inspection: LibraryInspection): string {
     if (inspection.applicationId === 0 && inspection.userVersion === libraryInfo?.userVersion) {
       return 'Cette ancienne bibliothèque Textothèque doit être adoptée avant ouverture. Une copie de sauvegarde sera créée automatiquement.';
@@ -897,6 +918,11 @@ export default function App() {
     if (menuAction.action === 'open') void handleOpenLibrary();
     if (menuAction.action === 'known') void handleOpenLibrary(menuAction.path);
     if (menuAction.action === 'backup') void handleBackupLibrary();
+  }));
+
+  useEffect(() => window.textotheque.onFileMenuAction(() => {
+    const snapshot = latestTextExportRef.current;
+    if (snapshot) void handleExportTextDocument({ ...snapshot });
   }));
 
   async function handleTrashCurrentDocument() {
