@@ -429,7 +429,11 @@ export default function App() {
     try {
       folder = await createFolder(parentId);
     } catch (createError: unknown) {
-      showOperationError('create-folder', createError, 'Impossible de creer le dossier.');
+      showOperationError(
+        'create-folder',
+        createError,
+        parentId === null ? 'Impossible de creer le dossier.' : 'Impossible de creer le sous-dossier.'
+      );
       return;
     }
 
@@ -514,7 +518,13 @@ export default function App() {
       });
     } catch (saveError: unknown) {
       setSaveState('error');
-      showOperationError('save-document', saveError, 'Impossible de sauvegarder le document.');
+      showOperationError(
+        'save-document',
+        saveError,
+        folderId !== selectedDocument.folder_id
+          ? 'Impossible d affecter ce document a ce dossier.'
+          : 'Impossible de sauvegarder le document.'
+      );
       return;
     }
 

@@ -244,6 +244,17 @@ export class TextothequeDatabase {
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_folders_parent_id ON folders(parent_id)`);
   }
 
+  private assertFolderExists(folderId: number | null, operation: string): void {
+    if (folderId === null) {
+      return;
+    }
+
+    const folder = this.db.prepare(`SELECT 1 FROM folders WHERE id = ?`).get(folderId);
+    if (!folder) {
+      throw new Error(`${operation} : le dossier ${folderId} est introuvable.`);
+    }
+  }
+
   cleanupEmptyDraftDocuments(): number {
     const now = new Date().toISOString();
     const result = this.db
@@ -299,6 +310,7 @@ export class TextothequeDatabase {
   }
 
   createDocument(folderId: number | null = null): TextDocument {
+    this.assertFolderExists(folderId, 'Impossible de creer le document');
     const now = new Date().toISOString();
     const result = this.db
       .prepare(
@@ -315,6 +327,8 @@ export class TextothequeDatabase {
   }
 
   updateDocument(id: number, input: DocumentInput): TextDocument {
+    const folderId = input.folder_id ?? null;
+    this.assertFolderExists(folderId, 'Impossible de mettre a jour le document');
     const now = new Date().toISOString();
     this.db
       .prepare(
@@ -336,7 +350,7 @@ export class TextothequeDatabase {
         notes: input.notes,
         status: input.status,
         favorite: input.favorite ? 1 : 0,
-        folder_id: input.folder_id ?? null,
+        folder_id: folderId,
         now,
       });
 
@@ -358,6 +372,7 @@ export class TextothequeDatabase {
   }
 
   createFolder(parentId: number | null = null): Folder {
+    this.assertFolderExists(parentId, 'Impossible de creer le sous-dossier');
     const now = new Date().toISOString();
     const position = this.db
       .prepare(

@@ -1,5 +1,6 @@
 const os = require('node:os');
 const path = require('node:path');
+const Database = require('better-sqlite3');
 const { app } = require('electron');
 
 app
@@ -70,6 +71,62 @@ app
 
     if (unfiledAgain.folder_id !== null) {
       throw new Error('Le retour en Non classe ne remet pas folder_id a NULL.');
+    }
+
+    const beforeRejectedUpdate = db.getDocument(saved.id);
+    let rejectedUpdateError = null;
+    try {
+      db.updateDocument(saved.id, {
+        title: 'Ce titre ne doit pas etre enregistre',
+        content: 'Ce contenu ne doit pas etre enregistre.',
+        notes: 'Cette note ne doit pas etre enregistree.',
+        status: 'archived',
+        favorite: false,
+        folder_id: 999999,
+      });
+    } catch (error) {
+      rejectedUpdateError = error;
+    }
+
+    if (!(rejectedUpdateError instanceof Error) || !rejectedUpdateError.message.includes('dossier 999999 est introuvable')) {
+      throw new Error('Une affectation vers un dossier inexistant doit echouer avec un message explicite.');
+    }
+
+    const afterRejectedUpdate = db.getDocument(saved.id);
+    if (JSON.stringify(afterRejectedUpdate) !== JSON.stringify(beforeRejectedUpdate)) {
+      throw new Error('Une affectation invalide a modifie le document existant.');
+    }
+
+    const documentCountBeforeRejectedCreate = db.listDocuments().length;
+    let rejectedCreateError = null;
+    try {
+      db.createDocument(999999);
+    } catch (error) {
+      rejectedCreateError = error;
+    }
+
+    if (!(rejectedCreateError instanceof Error) || !rejectedCreateError.message.includes('dossier 999999 est introuvable')) {
+      throw new Error('La creation dans un dossier inexistant doit echouer avec un message explicite.');
+    }
+
+    if (db.listDocuments().length !== documentCountBeforeRejectedCreate) {
+      throw new Error('La creation invalide a laisse un document orphelin.');
+    }
+
+    const folderCountBeforeRejectedCreate = db.listFolders().length;
+    let rejectedFolderError = null;
+    try {
+      db.createFolder(999999);
+    } catch (error) {
+      rejectedFolderError = error;
+    }
+
+    if (!(rejectedFolderError instanceof Error) || !rejectedFolderError.message.includes('dossier 999999 est introuvable')) {
+      throw new Error('La creation sous un parent inexistant doit echouer avec un message explicite.');
+    }
+
+    if (db.listFolders().length !== folderCountBeforeRejectedCreate) {
+      throw new Error('La creation invalide a laisse un sous-dossier orphelin.');
     }
 
     const createdInFolder = db.createDocument(rootFolder.id);
@@ -217,6 +274,32 @@ app
     }
 
     db.close();
+
+    const diagnosticDb = new Database(dbPath, { readonly: true });
+    const orphanDocuments = diagnosticDb
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM documents AS document
+         LEFT JOIN folders AS folder ON folder.id = document.folder_id
+         WHERE document.folder_id IS NOT NULL AND folder.id IS NULL`
+      )
+      .get().count;
+    const orphanFolders = diagnosticDb
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM folders AS child
+         LEFT JOIN folders AS parent ON parent.id = child.parent_id
+         WHERE child.parent_id IS NOT NULL AND parent.id IS NULL`
+      )
+      .get().count;
+    diagnosticDb.close();
+
+    if (orphanDocuments !== 0 || orphanFolders !== 0) {
+      throw new Error(
+        `Le diagnostic referentiel a trouve ${orphanDocuments} document(s) et ${orphanFolders} dossier(s) orphelin(s).`
+      );
+    }
+
     console.log(`DB check OK: ${dbPath}`);
     app.quit();
   })
