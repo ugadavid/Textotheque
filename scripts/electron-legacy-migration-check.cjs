@@ -1,7 +1,9 @@
-const os = require('node:os');
 const path = require('node:path');
 const Database = require('better-sqlite3');
 const { app } = require('electron');
+const { createTestTempDirectory, removeTestTempDirectory } = require('./test-temp-directory.cjs');
+
+const tempDirectory = createTestTempDirectory('legacy-migration');
 
 const legacyDocumentsSchema = `
   CREATE TABLE documents (
@@ -58,7 +60,15 @@ function assert(condition, message) {
 }
 
 function temporaryDatabasePath(label) {
-  return path.join(os.tmpdir(), `textotheque-${label}-${Date.now()}-${Math.random().toString(16).slice(2)}.sqlite`);
+  return path.join(tempDirectory, `${label}.sqlite`);
+}
+
+function withDatabase(db, operation) {
+  try {
+    return operation(db);
+  } finally {
+    db.close();
+  }
 }
 
 function getUserVersion(db) {
@@ -80,20 +90,20 @@ function insertLegacyDocument(db, title, content) {
 }
 
 function inspectCurrentSchema(dbPath, expectedVersion) {
-  const inspectDb = new Database(dbPath, { readonly: true });
-  const version = getUserVersion(inspectDb);
-  const documentColumns = new Set(inspectDb.pragma('table_info(documents)').map((column) => column.name));
-  const folderColumns = new Set(inspectDb.pragma('table_info(folders)').map((column) => column.name));
-  const documentIndexes = new Set(inspectDb.pragma('index_list(documents)').map((index) => index.name));
-  const folderIndexes = new Set(inspectDb.pragma('index_list(folders)').map((index) => index.name));
-  inspectDb.close();
+  const schema = withDatabase(new Database(dbPath, { readonly: true }), (inspectDb) => ({
+    version: getUserVersion(inspectDb),
+    documentColumns: new Set(inspectDb.pragma('table_info(documents)').map((column) => column.name)),
+    folderColumns: new Set(inspectDb.pragma('table_info(folders)').map((column) => column.name)),
+    documentIndexes: new Set(inspectDb.pragma('index_list(documents)').map((index) => index.name)),
+    folderIndexes: new Set(inspectDb.pragma('index_list(folders)').map((index) => index.name)),
+  }));
 
-  assert(version === expectedVersion, `La version finale attendue est ${expectedVersion}, pas ${version}.`);
+  assert(schema.version === expectedVersion, `La version finale attendue est ${expectedVersion}, pas ${schema.version}.`);
   for (const column of ['deleted_at', 'folder_id']) {
-    assert(documentColumns.has(column), `La colonne documents.${column} est absente.`);
+    assert(schema.documentColumns.has(column), `La colonne documents.${column} est absente.`);
   }
   for (const column of ['id', 'name', 'parent_id', 'position', 'created_at', 'updated_at']) {
-    assert(folderColumns.has(column), `La colonne folders.${column} est absente.`);
+    assert(schema.folderColumns.has(column), `La colonne folders.${column} est absente.`);
   }
   for (const index of [
     'idx_documents_updated_at',
@@ -101,9 +111,9 @@ function inspectCurrentSchema(dbPath, expectedVersion) {
     'idx_documents_deleted_at',
     'idx_documents_folder_id',
   ]) {
-    assert(documentIndexes.has(index), `L index ${index} est absent.`);
+    assert(schema.documentIndexes.has(index), `L index ${index} est absent.`);
   }
-  assert(folderIndexes.has('idx_folders_parent_id'), 'L index idx_folders_parent_id est absent.');
+  assert(schema.folderIndexes.has('idx_folders_parent_id'), 'L index idx_folders_parent_id est absent.');
 }
 
 function exerciseMigratedDocument(db, title, expectedContent) {
@@ -137,96 +147,109 @@ function exerciseMigratedDocument(db, title, expectedContent) {
 
 function testFreshDatabase(createTextothequeDatabase, currentVersion) {
   const dbPath = temporaryDatabasePath('fresh-schema');
-  const db = createTextothequeDatabase(dbPath);
-  const created = db.createDocument();
-  const saved = db.updateDocument(created.id, {
-    title: 'Document base neuve',
-    content: 'Creation directe au schema courant.',
-    notes: '',
-    status: 'active',
-    favorite: false,
-    folder_id: null,
+  withDatabase(createTextothequeDatabase(dbPath), (db) => {
+    const created = db.createDocument();
+    const saved = db.updateDocument(created.id, {
+      title: 'Document base neuve',
+      content: 'Creation directe au schema courant.',
+      notes: '',
+      status: 'active',
+      favorite: false,
+      folder_id: null,
+    });
+    assert(saved.content === 'Creation directe au schema courant.', 'La base neuve ne permet pas une sauvegarde normale.');
   });
-  assert(saved.content === 'Creation directe au schema courant.', 'La base neuve ne permet pas une sauvegarde normale.');
-  db.close();
   inspectCurrentSchema(dbPath, currentVersion);
 }
 
 function testPreTrashLegacyDatabase(createTextothequeDatabase, currentVersion) {
   const dbPath = temporaryDatabasePath('legacy-v0');
-  const fixtureDb = new Database(dbPath);
-  fixtureDb.exec(legacyDocumentsSchema);
-  insertLegacyDocument(fixtureDb, 'Document legacy v0', 'Contenu conserve depuis une base sans deleted_at.');
-  assert(getUserVersion(fixtureDb) === 0, 'La fixture legacy v0 doit commencer a user_version 0.');
-  fixtureDb.close();
+  withDatabase(new Database(dbPath), (fixtureDb) => {
+    fixtureDb.exec(legacyDocumentsSchema);
+    insertLegacyDocument(fixtureDb, 'Document legacy v0', 'Contenu conserve depuis une base sans deleted_at.');
+    assert(getUserVersion(fixtureDb) === 0, 'La fixture legacy v0 doit commencer a user_version 0.');
+  });
 
-  const db = createTextothequeDatabase(dbPath);
-  exerciseMigratedDocument(db, 'Document legacy v0', 'Contenu conserve depuis une base sans deleted_at.');
-  db.close();
+  withDatabase(createTextothequeDatabase(dbPath), (db) => {
+    exerciseMigratedDocument(db, 'Document legacy v0', 'Contenu conserve depuis une base sans deleted_at.');
+  });
   inspectCurrentSchema(dbPath, currentVersion);
 }
 
 function testTrashOnlyDatabase(createTextothequeDatabase, currentVersion) {
   const dbPath = temporaryDatabasePath('legacy-v1');
-  const fixtureDb = new Database(dbPath);
-  fixtureDb.exec(legacyDocumentsSchema);
-  fixtureDb.exec('ALTER TABLE documents ADD COLUMN deleted_at TEXT');
-  insertLegacyDocument(fixtureDb, 'Document legacy v1', 'Contenu conserve depuis une base avec corbeille.');
-  assert(getUserVersion(fixtureDb) === 0, 'La fixture historique avec corbeille doit commencer sans version explicite.');
-  fixtureDb.close();
+  withDatabase(new Database(dbPath), (fixtureDb) => {
+    fixtureDb.exec(legacyDocumentsSchema);
+    fixtureDb.exec('ALTER TABLE documents ADD COLUMN deleted_at TEXT');
+    insertLegacyDocument(fixtureDb, 'Document legacy v1', 'Contenu conserve depuis une base avec corbeille.');
+    assert(getUserVersion(fixtureDb) === 0, 'La fixture historique avec corbeille doit commencer sans version explicite.');
+  });
 
-  const db = createTextothequeDatabase(dbPath);
-  exerciseMigratedDocument(db, 'Document legacy v1', 'Contenu conserve depuis une base avec corbeille.');
-  db.close();
+  withDatabase(createTextothequeDatabase(dbPath), (db) => {
+    exerciseMigratedDocument(db, 'Document legacy v1', 'Contenu conserve depuis une base avec corbeille.');
+  });
   inspectCurrentSchema(dbPath, currentVersion);
 }
 
 function testUnversionedCurrentDatabase(createTextothequeDatabase, currentVersion) {
   const dbPath = temporaryDatabasePath('unversioned-current');
-  const fixtureDb = new Database(dbPath);
-  fixtureDb.exec(currentSchemaFixture);
-  insertLegacyDocument(fixtureDb, 'Document structure actuelle', 'Contenu deja au schema courant.');
-  assert(getUserVersion(fixtureDb) === 0, 'La base actuelle historique doit commencer sans version explicite.');
-  const schemaVersionBeforeAdoption = fixtureDb.pragma('schema_version', { simple: true });
-  fixtureDb.close();
+  const schemaVersionBeforeAdoption = withDatabase(new Database(dbPath), (fixtureDb) => {
+    fixtureDb.exec(currentSchemaFixture);
+    insertLegacyDocument(fixtureDb, 'Document structure actuelle', 'Contenu deja au schema courant.');
+    assert(getUserVersion(fixtureDb) === 0, 'La base actuelle historique doit commencer sans version explicite.');
+    return fixtureDb.pragma('schema_version', { simple: true });
+  });
 
-  let db = createTextothequeDatabase(dbPath);
-  const adoptedDocument = db.listDocuments().find((document) => document.title === 'Document structure actuelle');
-  assert(adoptedDocument?.content === 'Contenu deja au schema courant.', 'L adoption a perdu le document courant.');
-  db.close();
+  withDatabase(createTextothequeDatabase(dbPath), (db) => {
+    const adoptedDocument = db.listDocuments().find((document) => document.title === 'Document structure actuelle');
+    assert(adoptedDocument?.content === 'Contenu deja au schema courant.', 'L adoption a perdu le document courant.');
+  });
 
-  const adoptedDb = new Database(dbPath, { readonly: true });
-  const schemaVersionAfterAdoption = adoptedDb.pragma('schema_version', { simple: true });
-  adoptedDb.close();
+  const schemaVersionAfterAdoption = withDatabase(
+    new Database(dbPath, { readonly: true }),
+    (adoptedDb) => adoptedDb.pragma('schema_version', { simple: true })
+  );
   assert(
     schemaVersionAfterAdoption === schemaVersionBeforeAdoption,
     'L adoption de la structure actuelle ne doit pas rejouer de DDL.'
   );
   inspectCurrentSchema(dbPath, currentVersion);
 
-  db = createTextothequeDatabase(dbPath);
-  db.close();
-  const reopenedDb = new Database(dbPath, { readonly: true });
-  const schemaVersionAfterReopen = reopenedDb.pragma('schema_version', { simple: true });
-  reopenedDb.close();
+  withDatabase(createTextothequeDatabase(dbPath), () => undefined);
+  const schemaVersionAfterReopen = withDatabase(
+    new Database(dbPath, { readonly: true }),
+    (reopenedDb) => reopenedDb.pragma('schema_version', { simple: true })
+  );
   assert(schemaVersionAfterReopen === schemaVersionAfterAdoption, 'Une base actuelle ne doit pas rejouer les migrations.');
 }
 
 app
   .whenReady()
   .then(async () => {
-    const { createTextothequeDatabase, CURRENT_SCHEMA_VERSION } = await import('../dist-electron/database.js');
+    let successMessage;
+    try {
+      const { createTextothequeDatabase, CURRENT_SCHEMA_VERSION } = await import('../dist-electron/database.js');
 
-    assert(CURRENT_SCHEMA_VERSION === 2, 'Le test legacy doit etre synchronise avec le schema courant v2.');
-    testFreshDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION);
-    testPreTrashLegacyDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION);
-    testTrashOnlyDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION);
-    testUnversionedCurrentDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION);
+      assert(CURRENT_SCHEMA_VERSION === 2, 'Le test legacy doit etre synchronise avec le schema courant v2.');
+      testFreshDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION);
+      testPreTrashLegacyDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION);
+      testTrashOnlyDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION);
+      testUnversionedCurrentDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION);
+      successMessage = `legacy migrations ok: schema ${CURRENT_SCHEMA_VERSION}, 4 scenarios`;
+    } finally {
+      removeTestTempDirectory(tempDirectory);
+    }
 
-    console.log(`legacy migrations ok: schema ${CURRENT_SCHEMA_VERSION}, 4 scenarios`);
+    console.log(successMessage);
+    console.log(`legacy migration temporary resources cleaned: ${tempDirectory}`);
     app.quit();
   })
   .catch((error) => {
     console.error(error);
+    try {
+      removeTestTempDirectory(tempDirectory);
+    } catch (cleanupError) {
+      console.error(cleanupError);
+    }
     app.exit(1);
   });

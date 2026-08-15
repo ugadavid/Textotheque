@@ -1,7 +1,9 @@
-const os = require('node:os');
 const path = require('node:path');
 const Database = require('better-sqlite3');
 const { app } = require('electron');
+const { createTestTempDirectory, removeTestTempDirectory } = require('./test-temp-directory.cjs');
+
+const tempDirectory = createTestTempDirectory('db-check');
 
 function assertCanonicalIsoUtc(value, label) {
   if (typeof value !== 'string') {
@@ -17,9 +19,16 @@ function assertCanonicalIsoUtc(value, label) {
 app
   .whenReady()
   .then(async () => {
-    const { createTextothequeDatabase } = await import('../dist-electron/database.js');
-    const dbPath = path.join(os.tmpdir(), `textotheque-check-${Date.now()}.sqlite`);
-    let db = createTextothequeDatabase(dbPath);
+    let db = null;
+    let diagnosticDb = null;
+    let successMessage;
+
+    console.log(`DB check temporary resources: ${tempDirectory}`);
+
+    try {
+      const { createTextothequeDatabase } = await import('../dist-electron/database.js');
+      const dbPath = path.join(tempDirectory, 'test.sqlite');
+      db = createTextothequeDatabase(dbPath);
 
     const created = db.createDocument();
     if (created.title !== '') {
@@ -165,6 +174,7 @@ app
     });
 
     db.close();
+    db = null;
 
     db = createTextothequeDatabase(dbPath);
     const persisted = db.getDocument(saved.id);
@@ -246,6 +256,7 @@ app
     }
 
     db.close();
+    db = null;
 
     db = createTextothequeDatabase(dbPath);
     const emptyDraft = db.createDocument();
@@ -279,6 +290,7 @@ app
     });
 
     db.close();
+    db = null;
 
     db = createTextothequeDatabase(dbPath);
     const afterCleanupIds = new Set(db.listDocuments().map((document) => document.id));
@@ -304,8 +316,9 @@ app
     }
 
     db.close();
+    db = null;
 
-    const diagnosticDb = new Database(dbPath, { readonly: true });
+    diagnosticDb = new Database(dbPath, { readonly: true });
     const orphanDocuments = diagnosticDb
       .prepare(
         `SELECT COUNT(*) AS count
@@ -323,6 +336,7 @@ app
       )
       .get().count;
     diagnosticDb.close();
+    diagnosticDb = null;
 
     if (orphanDocuments !== 0 || orphanFolders !== 0) {
       throw new Error(
@@ -330,10 +344,46 @@ app
       );
     }
 
-    console.log(`DB check OK: ${dbPath}`);
+      if (process.env.TEXTOTHEQUE_TEST_FORCE_FAILURE === 'db-check') {
+        throw new Error('Echec controle demande apres les assertions DB.');
+      }
+
+      successMessage = 'DB check OK';
+    } finally {
+      const cleanupErrors = [];
+
+      for (const openDatabase of [diagnosticDb, db]) {
+        if (!openDatabase) {
+          continue;
+        }
+        try {
+          openDatabase.close();
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+      }
+
+      try {
+        removeTestTempDirectory(tempDirectory);
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(cleanupErrors, 'Le nettoyage des ressources temporaires du test DB a echoue.');
+      }
+    }
+
+    console.log(successMessage);
+    console.log(`DB check temporary resources cleaned: ${tempDirectory}`);
     app.quit();
   })
   .catch((error) => {
     console.error(error);
+    try {
+      removeTestTempDirectory(tempDirectory);
+    } catch (cleanupError) {
+      console.error(cleanupError);
+    }
     app.exit(1);
   });

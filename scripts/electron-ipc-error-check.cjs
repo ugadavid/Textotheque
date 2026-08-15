@@ -1,13 +1,12 @@
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const electronPath = require('electron');
+const { createTestTempDirectory, removeTestTempDirectory } = require('./test-temp-directory.cjs');
 
 const projectRoot = path.resolve(__dirname, '..');
 const mainPath = path.join(projectRoot, 'dist-electron', 'main.js');
-const invalidDatabasePath = fs.mkdtempSync(path.join(os.tmpdir(), 'textotheque-ipc-error-'));
+const invalidDatabasePath = createTestTempDirectory('ipc-error');
 const outputPrefix = 'textotheque ipc error check: ';
 
 try {
@@ -41,5 +40,7 @@ try {
 
   console.log('ipc error propagation ok: documents:list rejection caught by renderer');
 } finally {
-  fs.rmSync(invalidDatabasePath, { recursive: true, force: true });
+  removeTestTempDirectory(invalidDatabasePath);
 }
+
+console.log(`ipc error temporary resources cleaned: ${invalidDatabasePath}`);
