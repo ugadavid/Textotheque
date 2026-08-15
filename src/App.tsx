@@ -34,7 +34,6 @@ const UNSAVED_CHANGES_MESSAGE =
   'Ce document contient des modifications non sauvegardees. Voulez-vous vraiment continuer sans sauvegarder ?';
 const PANE_STORAGE_KEY = 'textotheque:pane-widths:v1';
 const UNTITLED_FALLBACK = 'Sans titre';
-const APP_VERSION = '0.1.13';
 
 interface PaneWidths {
   left: number;
@@ -725,7 +724,7 @@ export default function App() {
         saveState={displayedSaveState}
         characterCount={characterCount}
         wordCount={wordCount}
-        version={APP_VERSION}
+        version={__APP_VERSION__}
       />
       {confirmDialog ? (
         <div className="confirm-backdrop" role="presentation">

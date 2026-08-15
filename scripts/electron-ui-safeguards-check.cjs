@@ -1,6 +1,7 @@
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { app, BrowserWindow, ipcMain } = require('electron');
+const { version: packageVersion } = require('../package.json');
 
 let documents = [
   {
@@ -164,6 +165,7 @@ app
 
     const result = await window.webContents.executeJavaScript(`
       (async () => {
+        const expectedAppVersion = ${JSON.stringify(packageVersion)};
         const waitFor = async (predicate, label) => {
           const start = Date.now();
           while (Date.now() - start < 3000) {
@@ -196,6 +198,10 @@ app
         await waitFor(() => document.querySelectorAll('.document-item').length >= 2, 'documents loaded');
         await waitFor(() => document.querySelector('.status-bar')?.textContent.includes('2 documents'), 'status total documents');
         await waitFor(() => document.querySelector('.status-bar')?.textContent.includes('Corbeille: 2'), 'status trash count');
+        await waitFor(
+          () => document.querySelector('.status-bar')?.textContent.includes('v' + expectedAppVersion),
+          'status package version'
+        );
         const searchInput = document.querySelector('.search-input-row input');
         if (!searchInput) throw new Error('search input missing');
         const viewButtons = document.querySelectorAll('.nav-view-button');
