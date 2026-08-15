@@ -38,7 +38,9 @@ export interface DocumentInput {
   folder_id: number | null;
 }
 
-const schema = `
+export const CURRENT_SCHEMA_VERSION = 2;
+
+const currentSchema = `
 CREATE TABLE IF NOT EXISTS documents (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL DEFAULT '',
@@ -65,6 +67,55 @@ CREATE TABLE IF NOT EXISTS folders (
 );
 `;
 
+interface SchemaMigration {
+  version: number;
+  name: string;
+  migrate: (db: Database.Database) => void;
+}
+
+function tableExists(db: Database.Database, tableName: string): boolean {
+  return Boolean(
+    db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(tableName)
+  );
+}
+
+function columnExists(db: Database.Database, tableName: string, columnName: string): boolean {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  return columns.some((column) => column.name === columnName);
+}
+
+const schemaMigrations: SchemaMigration[] = [
+  {
+    version: 1,
+    name: 'add documents.deleted_at',
+    migrate: (db) => {
+      if (!columnExists(db, 'documents', 'deleted_at')) {
+        db.exec(`ALTER TABLE documents ADD COLUMN deleted_at TEXT`);
+      }
+    },
+  },
+  {
+    version: 2,
+    name: 'add folders and documents.folder_id',
+    migrate: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS folders (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          parent_id INTEGER,
+          position INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (parent_id) REFERENCES folders(id) ON DELETE SET NULL
+        )
+      `);
+      if (!columnExists(db, 'documents', 'folder_id')) {
+        db.exec(`ALTER TABLE documents ADD COLUMN folder_id INTEGER`);
+      }
+    },
+  },
+];
+
 export class TextothequeDatabase {
   private db: Database.Database;
 
@@ -72,19 +123,116 @@ export class TextothequeDatabase {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
-    this.db.exec(schema);
-    this.runMigrations();
+    this.initializeSchema();
     this.createIndexes();
     this.cleanupEmptyDraftDocuments();
   }
 
-  private runMigrations(): void {
-    const columns = this.db.prepare(`PRAGMA table_info(documents)`).all() as Array<{ name: string }>;
-    if (!columns.some((column) => column.name === 'deleted_at')) {
-      this.db.exec(`ALTER TABLE documents ADD COLUMN deleted_at TEXT`);
+  private initializeSchema(): void {
+    const declaredVersion = this.getSchemaVersion();
+    if (declaredVersion > CURRENT_SCHEMA_VERSION) {
+      throw new Error(
+        `La base utilise le schema ${declaredVersion}, plus recent que le schema ${CURRENT_SCHEMA_VERSION} pris en charge.`
+      );
     }
-    if (!columns.some((column) => column.name === 'folder_id')) {
-      this.db.exec(`ALTER TABLE documents ADD COLUMN folder_id INTEGER`);
+
+    if (!tableExists(this.db, 'documents')) {
+      const createLatestSchema = this.db.transaction(() => {
+        this.db.exec(currentSchema);
+        this.setSchemaVersion(CURRENT_SCHEMA_VERSION);
+      });
+      createLatestSchema();
+      this.validateCurrentSchema();
+      return;
+    }
+
+    if (declaredVersion === 0) {
+      this.setSchemaVersion(this.inferUnversionedSchemaVersion());
+    }
+
+    this.validateSchemaVersion(this.getSchemaVersion());
+    this.runMigrations();
+    this.validateCurrentSchema();
+  }
+
+  private getSchemaVersion(): number {
+    return this.db.pragma('user_version', { simple: true }) as number;
+  }
+
+  private setSchemaVersion(version: number): void {
+    this.db.pragma(`user_version = ${version}`);
+  }
+
+  private inferUnversionedSchemaVersion(): number {
+    const hasDeletedAt = columnExists(this.db, 'documents', 'deleted_at');
+    const hasFolderId = columnExists(this.db, 'documents', 'folder_id');
+    const hasFolders = tableExists(this.db, 'folders');
+
+    if (hasDeletedAt && hasFolderId && hasFolders) {
+      return 2;
+    }
+    if (hasDeletedAt) {
+      return 1;
+    }
+    return 0;
+  }
+
+  private runMigrations(): void {
+    let currentVersion = this.getSchemaVersion();
+
+    for (const migration of schemaMigrations) {
+      if (migration.version <= currentVersion) {
+        continue;
+      }
+
+      const applyMigration = this.db.transaction(() => {
+        migration.migrate(this.db);
+        this.setSchemaVersion(migration.version);
+      });
+      applyMigration();
+      currentVersion = migration.version;
+    }
+
+    if (currentVersion !== CURRENT_SCHEMA_VERSION) {
+      throw new Error(
+        `La base utilise le schema ${currentVersion}; le schema attendu est ${CURRENT_SCHEMA_VERSION}.`
+      );
+    }
+  }
+
+  private validateSchemaVersion(version: number): void {
+    const missingStructures: string[] = [];
+    if (version >= 1 && !columnExists(this.db, 'documents', 'deleted_at')) {
+      missingStructures.push('documents.deleted_at');
+    }
+    if (version >= 2 && !columnExists(this.db, 'documents', 'folder_id')) {
+      missingStructures.push('documents.folder_id');
+    }
+    if (version >= 2 && !tableExists(this.db, 'folders')) {
+      missingStructures.push('folders');
+    }
+
+    if (missingStructures.length > 0) {
+      throw new Error(
+        `Le schema declare la version ${version}, mais il manque: ${missingStructures.join(', ')}.`
+      );
+    }
+  }
+
+  private validateCurrentSchema(): void {
+    const missingStructures: string[] = [];
+    if (!columnExists(this.db, 'documents', 'deleted_at')) {
+      missingStructures.push('documents.deleted_at');
+    }
+    if (!columnExists(this.db, 'documents', 'folder_id')) {
+      missingStructures.push('documents.folder_id');
+    }
+    if (!tableExists(this.db, 'folders')) {
+      missingStructures.push('folders');
+    }
+
+    if (missingStructures.length > 0) {
+      throw new Error(`Schema SQLite incomplet: ${missingStructures.join(', ')}.`);
     }
   }
 

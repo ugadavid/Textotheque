@@ -1,3 +1,7 @@
+-- Snapshot documentaire du schema SQLite courant (user_version = 2).
+-- La source canonique executee et les migrations versionnees vivent dans
+-- electron/database.ts. Ce fichier n'est pas charge par l'application.
+
 CREATE TABLE IF NOT EXISTS documents (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL DEFAULT '',
