@@ -24,7 +24,7 @@ const documentRecord = {
 
 app.whenReady().then(async () => {
   const textExportModule = await import(pathToFileURL(path.join(__dirname, '..', 'dist-electron', 'text-export.js')).href);
-  const exactBytes = 'ligne 1\r\nligne 2\naccents éà — 漢字 🙂';
+  const exactBytes = 'ligne 1\r\n\tligne 2\naccents éà — 漢字 🙂';
   const byteCheckPath = path.join(temporaryDirectory, 'bytes.txt');
   await textExportModule.writeTextExport(byteCheckPath, exactBytes);
   const writtenBytes = fs.readFileSync(byteCheckPath);
@@ -90,7 +90,7 @@ app.whenReady().then(async () => {
   });
   await window.loadURL(pathToFileURL(path.join(__dirname, '..', 'dist', 'index.html')).toString());
 
-  const draft = { title: 'Brouillon : visible ?', content: 'Première ligne\nDeuxième ligne — 漢字 🙂' };
+  const draft = { title: 'Brouillon : visible ?', content: 'Première ligne\n\tDeuxième ligne — 漢字 🙂' };
   const result = await window.webContents.executeJavaScript(`
     (async () => {
       const waitFor = async (predicate, label) => {

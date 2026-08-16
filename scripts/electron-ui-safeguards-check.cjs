@@ -384,7 +384,7 @@ app
         }
         const viewButtons = document.querySelectorAll('.nav-view-button');
         if (viewButtons.length !== 2) throw new Error('document view buttons missing');
-        if (expectedAppVersion !== '0.1.20') throw new Error('unexpected application version');
+        if (expectedAppVersion !== '0.1.21') throw new Error('unexpected application version');
         const initialExpandedState = JSON.parse(window.localStorage.getItem('textotheque:expanded-folders:v2') ?? '[]');
         if (initialExpandedState.length !== 0) throw new Error('folders should be closed by default');
         await waitFor(() => window.localStorage.getItem('textotheque:pane-layout:v2'), 'pane layout stored');
@@ -820,11 +820,18 @@ app
           .find((item) => item.textContent.includes('Deuxieme document'))
           .click();
         await waitFor(() => document.querySelector('.title-input').value === 'Deuxieme document', 'trashed document selected');
-        if (document.querySelector('.content-editor').disabled !== true) {
+        const trashedEditor = document.querySelector('.content-editor');
+        if (trashedEditor.disabled !== true) {
           throw new Error('trashed document editor should be read-only');
         }
-        if (document.querySelector('.content-editor').value !== 'Document cible non sauvegarde') {
+        if (trashedEditor.value !== 'Document cible non sauvegarde') {
           throw new Error('trashed document content was not preserved');
+        }
+        const trashedContentBeforeTab = trashedEditor.value;
+        const trashedTabEvent = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+        const trashedTabDispatchResult = trashedEditor.dispatchEvent(trashedTabEvent);
+        if (trashedEditor.value !== trashedContentBeforeTab || trashedTabEvent.defaultPrevented || !trashedTabDispatchResult) {
+          throw new Error('Tab should not be intercepted in a read-only trashed document');
         }
         document.querySelector('.primary-button').click();
         await waitFor(() => document.querySelector('.status-bar')?.textContent.includes('Tous les textes'), 'restored active status context');

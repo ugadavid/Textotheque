@@ -117,6 +117,11 @@ app.whenReady().then(async () => {
         editor.dispatchEvent(new Event('input', { bubbles: true }));
       };
       const shortcutSave = () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true, bubbles: true }));
+      const dispatchKey = (element, key, options = {}) => {
+        const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options });
+        const dispatchResult = element.dispatchEvent(event);
+        return { defaultPrevented: event.defaultPrevented, dispatchResult };
+      };
     `;
 
     const debounceStart = updateCalls.length;
@@ -136,6 +141,90 @@ app.whenReady().then(async () => {
     })()`);
     if (updateCalls.length !== debounceStart + 1 || debounceResult.content !== 'Debounce final' || debounceResult.persisted !== 'Debounce final') {
       throw new Error(`Debounce autosave invalide: ${JSON.stringify(debounceResult)}, calls=${updateCalls.length - debounceStart}`);
+    }
+
+    const tabStart = updateCalls.length;
+    const tabResult = await window.webContents.executeJavaScript(`(async () => {
+      ${setup}
+      const editor = document.querySelector('.content-editor');
+      setEditor('abcdef');
+      await waitFor(() => document.querySelector('.title-dirty-marker'), 'tab cursor baseline dirty');
+      shortcutSave();
+      await waitFor(() => !document.querySelector('.title-dirty-marker'), 'tab cursor baseline saved');
+
+      editor.focus();
+      editor.setSelectionRange(3, 3);
+      const cursorEvent = dispatchKey(editor, 'Tab');
+      await waitFor(() => editor.value === 'abc\\tdef', 'tab inserted at cursor');
+      await waitFor(() => editor.selectionStart === 4 && editor.selectionEnd === 4, 'caret restored after tab');
+      const cursorState = {
+        value: editor.value,
+        start: editor.selectionStart,
+        end: editor.selectionEnd,
+        focused: document.activeElement === editor,
+        dirty: Boolean(document.querySelector('.title-dirty-marker')),
+        event: cursorEvent,
+      };
+      await waitFor(() => !document.querySelector('.title-dirty-marker'), 'tab cursor autosaved');
+      const cursorPersisted = (await window.textotheque.listDocuments()).find((item) => item.id === 1).content;
+
+      setEditor('abcDEFghi');
+      await waitFor(() => document.querySelector('.title-dirty-marker'), 'tab selection baseline dirty');
+      shortcutSave();
+      await waitFor(() => !document.querySelector('.title-dirty-marker'), 'tab selection baseline saved');
+      editor.focus();
+      editor.setSelectionRange(3, 6);
+      const selectionEvent = dispatchKey(editor, 'Tab');
+      await waitFor(() => editor.value === 'abc\\tghi', 'selection replaced by tab');
+      await waitFor(() => editor.selectionStart === 4 && editor.selectionEnd === 4, 'caret restored after selection replacement');
+      const selectionState = {
+        value: editor.value,
+        start: editor.selectionStart,
+        end: editor.selectionEnd,
+        focused: document.activeElement === editor,
+        dirty: Boolean(document.querySelector('.title-dirty-marker')),
+        event: selectionEvent,
+      };
+      shortcutSave();
+      await waitFor(() => !document.querySelector('.title-dirty-marker'), 'tab selection saved');
+
+      const beforeIgnoredKeys = editor.value;
+      const shiftTabEvent = dispatchKey(editor, 'Tab', { shiftKey: true });
+      const searchInput = document.querySelector('.search-input-row input');
+      const outsideTabEvent = dispatchKey(searchInput, 'Tab');
+      return {
+        cursorState,
+        cursorPersisted,
+        selectionState,
+        ignoredContentUnchanged: editor.value === beforeIgnoredKeys,
+        shiftTabEvent,
+        outsideTabEvent,
+      };
+    })()`);
+    if (
+      updateCalls.length !== tabStart + 4 ||
+      tabResult.cursorState.value !== 'abc\tdef' ||
+      tabResult.cursorPersisted !== 'abc\tdef' ||
+      tabResult.cursorState.start !== 4 ||
+      tabResult.cursorState.end !== 4 ||
+      !tabResult.cursorState.focused ||
+      !tabResult.cursorState.dirty ||
+      !tabResult.cursorState.event.defaultPrevented ||
+      tabResult.cursorState.event.dispatchResult !== false ||
+      tabResult.selectionState.value !== 'abc\tghi' ||
+      tabResult.selectionState.start !== 4 ||
+      tabResult.selectionState.end !== 4 ||
+      !tabResult.selectionState.focused ||
+      !tabResult.selectionState.dirty ||
+      !tabResult.selectionState.event.defaultPrevented ||
+      tabResult.selectionState.event.dispatchResult !== false ||
+      !tabResult.ignoredContentUnchanged ||
+      tabResult.shiftTabEvent.defaultPrevented ||
+      tabResult.shiftTabEvent.dispatchResult !== true ||
+      tabResult.outsideTabEvent.defaultPrevented ||
+      tabResult.outsideTabEvent.dispatchResult !== true
+    ) {
+      throw new Error(`Tabulation editeur invalide: ${JSON.stringify(tabResult)}, calls=${updateCalls.length - tabStart}`);
     }
 
     const manualStart = updateCalls.length;
@@ -253,7 +342,7 @@ app.whenReady().then(async () => {
       throw new Error(`Autosave ancienne bibliotheque non neutralise: ${JSON.stringify(librarySwitchResult)}`);
     }
 
-    console.log('autosave debounce, snapshots, errors and context switches ok');
+    console.log('autosave, editor tabs, snapshots, errors and context switches ok');
     window.close();
     app.quit();
   } catch (error) {
