@@ -1,7 +1,9 @@
 {
   "name": "textotheque",
   "productName": "Textotheque",
-  "version": "0.1.27",
+  "version": "0.1.28",
+  "description": "Application desktop locale d’écriture et de classement de textes",
+  "author": "David",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.js",
@@ -11,11 +13,17 @@
     "dev": "concurrently -k \"vite\" \"npm:dev:electron\"",
     "dev:electron": "wait-on http://localhost:5173 && tsc -p electron/tsconfig.json && electron dist-electron/main.js",
     "build": "tsc -b && vite build && tsc -p electron/tsconfig.json",
+    "package:win": "npm run build && electron-forge package --platform=win32",
+    "make:win": "npm run build && electron-forge make --platform=win32",
     "start": "npm run build && electron dist-electron/main.js",
     "test:db": "tsc -p electron/tsconfig.json && electron scripts/electron-db-check.cjs",
     "test:preload": "tsc -p electron/tsconfig.json && electron scripts/electron-preload-api-check.cjs",
     "test:ui-safeguards": "npm run build && electron scripts/electron-ui-safeguards-check.cjs",
     "test:app-identity": "npm run build && node scripts/electron-app-identity-check.cjs",
+    "test:runtime-profile": "npm run build && node scripts/electron-runtime-profile-check.cjs",
+    "test:packaged-smoke": "node scripts/electron-packaged-smoke-check.cjs",
+    "test:installer-smoke": "node scripts/electron-installer-smoke-check.cjs",
+    "test:concurrent-runtime": "node scripts/electron-concurrent-runtime-check.cjs",
     "test:ipc-error": "npm run build && node scripts/electron-ipc-error-check.cjs",
     "test:electron-sqlite": "electron scripts/electron-sqlite-smoke.cjs",
     "test:legacy-migration": "tsc -p electron/tsconfig.json && electron scripts/electron-legacy-migration-check.cjs",
@@ -30,21 +38,26 @@
     "test:saved-searches": "tsc -p electron/tsconfig.json && electron scripts/electron-saved-searches-check.cjs"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
     "better-sqlite3": "^11.8.1",
+    "electron-squirrel-startup": "^1.0.1"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.11.2",
+    "@electron-forge/maker-squirrel": "^7.11.2",
+    "@electron-forge/plugin-auto-unpack-natives": "^7.11.2",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/electron-squirrel-startup": "^1.0.2",
+    "@types/node": "^22.10.5",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
     "electron": "^33.3.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
     "vite": "^6.0.7",
     "wait-on": "^8.0.1"
-  },
-  "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
-    "@types/node": "^22.10.5",
-    "@types/react": "^18.3.18",
-    "@types/react-dom": "^18.3.5",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
   }
 }

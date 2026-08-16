@@ -11,8 +11,8 @@ import {
 } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import electronSquirrelStartup from 'electron-squirrel-startup';
 import {
   type DocumentCatalogOptions,
   type DocumentInput,
@@ -31,16 +31,26 @@ import {
   type TextExportResult,
 } from './text-export.js';
 import { buildSearchMenu, type SearchMenuAction, type SearchMenuState } from './search-menu.js';
+import { resolveRendererTarget, resolveRuntimeProfile } from './runtime-profile.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const require = createRequire(import.meta.url);
-const packageMetadata = require('../package.json') as { name: string; productName?: string };
-const applicationName = packageMetadata.productName ?? packageMetadata.name;
 const identityCheckRequested = process.argv.includes('--textotheque-check-app-identity');
 const ipcErrorCheckRequested = process.argv.includes('--textotheque-check-ipc-error');
+const packagedSmokeCheckRequested = process.argv.includes('--textotheque-check-packaged-smoke');
+const concurrentRuntimeCheckRequested = process.argv.includes('--textotheque-check-concurrent-runtime');
+const diagnosticMode = identityCheckRequested || ipcErrorCheckRequested || packagedSmokeCheckRequested || concurrentRuntimeCheckRequested;
+const runtimeProfile = resolveRuntimeProfile(app.getPath('appData'), app.isPackaged);
+const testUserDataPath = diagnosticMode ? process.env.TEXTOTHEQUE_TEST_USER_DATA_PATH : undefined;
+const activeUserDataPath = testUserDataPath ? path.resolve(testUserDataPath) : runtimeProfile.userDataPath;
 
-app.setName(applicationName);
+if (!electronSquirrelStartup) {
+  fs.mkdirSync(activeUserDataPath, { recursive: true });
+  app.setName(runtimeProfile.displayName);
+  app.setPath('userData', activeUserDataPath);
+  app.setPath('sessionData', activeUserDataPath);
+  app.setAppUserModelId('com.squirrel.Textotheque.Textotheque');
+}
 
 let mainWindow: BrowserWindow | null = null;
 let libraryManager: ActiveLibraryManager | null = null;
@@ -50,7 +60,7 @@ let documentExportAvailable = false;
 let searchMenuState: SearchMenuState = { activeSavedSearchId: null, modified: false, canSave: true };
 
 function getDatabasePath(): string {
-  return process.env.TEXTOTHEQUE_DB_PATH ?? path.join(app.getPath('userData'), 'textotheque.sqlite');
+  return process.env.TEXTOTHEQUE_DB_PATH ?? path.join(activeUserDataPath, 'textotheque.sqlite');
 }
 
 function getDatabase(): TextothequeDatabase {
@@ -62,7 +72,7 @@ function getDatabase(): TextothequeDatabase {
 
 function getLibraryHistory(): LibraryHistoryRegistry {
   if (!libraryHistory) {
-    const historyPath = process.env.TEXTOTHEQUE_LIBRARY_HISTORY_PATH ?? path.join(app.getPath('userData'), 'library-history.json');
+    const historyPath = process.env.TEXTOTHEQUE_LIBRARY_HISTORY_PATH ?? path.join(activeUserDataPath, 'library-history.json');
     libraryHistory = new LibraryHistoryRegistry(historyPath);
   }
   return libraryHistory;
@@ -323,15 +333,16 @@ function refreshApplicationMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-async function createWindow(): Promise<void> {
+async function createWindow(show = true): Promise<void> {
   closeApproved = false;
   documentExportAvailable = false;
   mainWindow = new BrowserWindow({
+    show,
     width: 1280,
     height: 820,
     minWidth: 980,
     minHeight: 640,
-    title: 'Textotheque',
+    title: runtimeProfile.displayName,
     backgroundColor: '#f5f2ec',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -340,11 +351,9 @@ async function createWindow(): Promise<void> {
     },
   });
 
-  if (!app.isPackaged) {
-    await mainWindow.loadURL('http://localhost:5173');
-  } else {
-    await mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
-  }
+  const rendererTarget = resolveRendererTarget(app.isPackaged, __dirname);
+  if (rendererTarget.kind === 'url') await mainWindow.loadURL(rendererTarget.value);
+  else await mainWindow.loadFile(rendererTarget.value);
 
   refreshApplicationMenu();
 
@@ -356,6 +365,113 @@ async function createWindow(): Promise<void> {
     event.preventDefault();
     mainWindow?.webContents.send('app:close-requested');
   });
+}
+
+async function runPackagedSmokeCheck(): Promise<void> {
+  const reportPath = process.env.TEXTOTHEQUE_PACKAGED_SMOKE_REPORT;
+  if (!app.isPackaged) throw new Error('Le smoke test package exige un executable package.');
+  if (!testUserDataPath || !process.env.TEXTOTHEQUE_DB_PATH || !process.env.TEXTOTHEQUE_LIBRARY_HISTORY_PATH || !reportPath) {
+    throw new Error('Le smoke test package exige tous les chemins temporaires controles.');
+  }
+
+  await createWindow(false);
+  if (!mainWindow) throw new Error('La fenetre packagee n a pas ete creee.');
+
+  const result = await mainWindow.webContents.executeJavaScript(`(async () => {
+    const waitFor = async (predicate, label, timeout = 8000) => {
+      const start = Date.now();
+      while (Date.now() - start < timeout) {
+        const value = predicate();
+        if (value) return value;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      throw new Error('Timeout: ' + label);
+    };
+    await waitFor(() => window.textotheque && document.querySelector('.app-shell'), 'renderer et preload');
+    const library = await window.textotheque.getLibraryInfo();
+    document.querySelector('button[title^="Nouveau document"]').click();
+    await waitFor(() => document.querySelector('.content-editor'), 'editeur du nouveau document');
+    const created = (await window.textotheque.listDocuments()).at(-1);
+    if (!created) throw new Error('Le document smoke n a pas ete cree.');
+    const editor = document.querySelector('.content-editor');
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+    valueSetter.call(editor, 'motpackaged autosave');
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+    await waitFor(() => document.querySelector('.title-dirty-marker'), 'etat dirty autosave');
+    await waitFor(() => !document.querySelector('.title-dirty-marker'), 'autosave persiste', 10000);
+    const persisted = await window.textotheque.getDocument(created.id);
+    const todo = await window.textotheque.getOrCreateSpecialDocument('todo');
+    const criteria = {
+      query: 'motpackaged', fields: ['title', 'content', 'notes'], matchMode: 'all',
+      folderSelection: { folderIds: [], includeUnclassified: false }, statuses: [], favoriteOnly: false,
+      created: { period: 'all', from: null, to: null }, modified: { period: 'all', from: null, to: null },
+      sortBy: 'relevance', direction: 'desc',
+    };
+    const search = await window.textotheque.searchDocuments(criteria);
+    const saved = await window.textotheque.createSavedSearch({ name: 'Smoke package', ...criteria }, library.path);
+    const savedList = await window.textotheque.listSavedSearches();
+    return {
+      protocol: location.protocol,
+      href: location.href,
+      preload: typeof window.textotheque.listDocuments === 'function',
+      schemaVersion: library.userVersion,
+      autosave: persisted && persisted.content === 'motpackaged autosave',
+      search: search.some((item) => item.id === created.id),
+      todo: todo.special_role === 'todo',
+      savedSearch: savedList.some((item) => item.id === saved.id),
+    };
+  })()`);
+
+  const report = {
+    packaged: app.isPackaged,
+    name: app.getName(),
+    version: app.getVersion(),
+    userData: app.getPath('userData'),
+    database: getDatabasePath(),
+    renderer: resolveRendererTarget(app.isPackaged, __dirname),
+    ...result,
+  };
+  fs.writeFileSync(path.resolve(reportPath), `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+  mainWindow.destroy();
+  mainWindow = null;
+  libraryManager?.close();
+  libraryManager = null;
+  app.quit();
+}
+
+async function runConcurrentRuntimeCheck(): Promise<void> {
+  const reportPath = process.env.TEXTOTHEQUE_CONCURRENT_REPORT;
+  const releasePath = process.env.TEXTOTHEQUE_CONCURRENT_RELEASE;
+  if (!testUserDataPath || !process.env.TEXTOTHEQUE_DB_PATH || !process.env.TEXTOTHEQUE_LIBRARY_HISTORY_PATH || !reportPath || !releasePath) {
+    throw new Error('Le test simultane exige tous les chemins temporaires controles.');
+  }
+  await createWindow(false);
+  if (!mainWindow) throw new Error('La fenetre du test simultane n a pas ete creee.');
+  const rendererResult = await mainWindow.webContents.executeJavaScript(`(async () => {
+    const library = await window.textotheque.getLibraryInfo();
+    const document = await window.textotheque.createDocument(null);
+    await window.textotheque.updateDocument(document.id, {
+      title: 'Runtime simultane', content: 'profil independant', notes: '',
+      status: 'active', favorite: false, folder_id: null,
+    }, library.path);
+    return { href: location.href, protocol: location.protocol, preload: typeof window.textotheque.listDocuments === 'function', library };
+  })()`);
+  fs.writeFileSync(path.resolve(reportPath), `${JSON.stringify({
+    packaged: app.isPackaged,
+    name: app.getName(),
+    userData: app.getPath('userData'),
+    sessionData: app.getPath('sessionData'),
+    database: getDatabasePath(),
+    history: process.env.TEXTOTHEQUE_LIBRARY_HISTORY_PATH,
+    ...rendererResult,
+  }, null, 2)}\n`, 'utf8');
+  const interval = setInterval(() => {
+    if (!fs.existsSync(path.resolve(releasePath))) return;
+    clearInterval(interval);
+    mainWindow?.destroy();
+    libraryManager?.close();
+    app.quit();
+  }, 100);
 }
 
 function openWindow(): void {
@@ -394,15 +510,23 @@ async function runIpcErrorCheck(): Promise<void> {
   app.quit();
 }
 
-app.whenReady().then(() => {
+if (electronSquirrelStartup) {
+  app.quit();
+} else app.whenReady().then(() => {
   if (identityCheckRequested) {
     console.log(
       `textotheque app identity: ${JSON.stringify({
         name: app.getName(),
         appData: app.getPath('appData'),
         userData: app.getPath('userData'),
+        defaultUserData: runtimeProfile.userDataPath,
         sessionData: app.getPath('sessionData'),
         database: getDatabasePath(),
+        libraryHistory: process.env.TEXTOTHEQUE_LIBRARY_HISTORY_PATH ?? path.join(activeUserDataPath, 'library-history.json'),
+        packaged: app.isPackaged,
+        displayName: runtimeProfile.displayName,
+        profileName: runtimeProfile.profileName,
+        renderer: resolveRendererTarget(app.isPackaged, __dirname),
       })}`
     );
     app.quit();
@@ -418,6 +542,22 @@ app.whenReady().then(() => {
     return;
   }
 
+  if (packagedSmokeCheckRequested) {
+    void runPackagedSmokeCheck().catch((error: unknown) => {
+      console.error('[Packaged smoke check]', error);
+      app.exit(1);
+    });
+    return;
+  }
+
+  if (concurrentRuntimeCheckRequested) {
+    void runConcurrentRuntimeCheck().catch((error: unknown) => {
+      console.error('[Concurrent runtime check]', error);
+      app.exit(1);
+    });
+    return;
+  }
+
   openWindow();
 
   app.on('activate', () => {
@@ -427,12 +567,12 @@ app.whenReady().then(() => {
   });
 });
 
-app.on('window-all-closed', () => {
+if (!electronSquirrelStartup) app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
 });
 
-app.on('before-quit', () => {
+if (!electronSquirrelStartup) app.on('before-quit', () => {
   libraryManager?.close();
 });

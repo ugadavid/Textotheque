@@ -78,6 +78,23 @@ Conséquences importantes :
 * l’application ne doit pas disperser automatiquement des fichiers dans des dossiers externes ;
 * l’application doit permettre de retrouver les textes depuis son interface, sans passer par l’explorateur Windows.
 
+## 3 bis. Exécutions DEV et STABLE
+
+Les deux environnements sont volontairement isolés :
+
+```text
+npm run dev              → Textotheque DEV → %APPDATA%\Textotheque-Dev → Vite 5173
+Textotheque installée    → Textotheque     → %APPDATA%\Textotheque     → renderer local file://
+```
+
+Le développement ne lit ni ne copie automatiquement les données STABLE. Pour produire l’installateur Windows Squirrel :
+
+```powershell
+npm.cmd run make:win
+```
+
+Le livrable principal est `out\make\squirrel.windows\x64\Textotheque Setup.exe`. Le workflow complet et les limites de la distribution locale non signée sont décrits dans `docs/DISTRIBUTION_WINDOWS.md`.
+
 ## 4. Objectif V0.1
 
 Créer une première application Electron fonctionnelle permettant de :

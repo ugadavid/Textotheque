@@ -774,6 +774,21 @@ effectue également un contrôle préalable du port.
 
 Ne pas tuer arbitrairement le propriétaire d’un port.
 
+### Séparation absolue DEV / STABLE
+
+Le runtime est déterminé par `app.isPackaged` avant tout accès au profil :
+
+```text
+DEV    → %APPDATA%\Textotheque-Dev → Textotheque DEV → Vite 5173
+STABLE → %APPDATA%\Textotheque     → Textotheque     → renderer file://
+```
+
+`%APPDATA%\Textotheque` est le profil STABLE réel du mainteneur. Tout agent travaillant sur le dépôt ne doit jamais l’utiliser pour un test ou un lancement de développement. Cette règle est absolue.
+
+Les tests de runtime packagé doivent rediriger explicitement `userData`, la base et le registre vers `%TEMP%\textotheque-test-*`. DEV et STABLE ne doivent partager ni SQLite, ni `library-history.json`, ni session Chromium, ni Local Storage.
+
+Le port `5173` appartient uniquement à DEV. STABLE charge `dist/index.html` sans serveur ni port. Les artefacts Forge vivent sous `out/`, restent ignorés par Git et ne contiennent jamais de données utilisateur.
+
 ---
 
 ## 22. better-sqlite3 / Electron
@@ -1144,7 +1159,7 @@ Fonctionnalités volontairement absentes ou reportées :
 - déplacement de dossiers ;
 - suppression de dossiers ;
 - historique documentaire ;
-- packaging ;
+- auto-update et signature du packaging Windows ;
 - synchronisation/cloud ;
 - gestion manuelle avancée du registre de bibliothèques.
 
