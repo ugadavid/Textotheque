@@ -7,10 +7,11 @@ const { createTestTempDirectory, removeTestTempDirectory } = require('./test-tem
 const projectRoot = path.resolve(__dirname, '..');
 const mainPath = path.join(projectRoot, 'dist-electron', 'main.js');
 const invalidDatabasePath = createTestTempDirectory('ipc-error');
+const electronProfilePath = path.join(invalidDatabasePath, 'electron-profile');
 const outputPrefix = 'textotheque ipc error check: ';
 
 try {
-  const result = spawnSync(electronPath, [mainPath, '--textotheque-check-ipc-error'], {
+  const result = spawnSync(electronPath, [mainPath, '--textotheque-check-ipc-error', `--user-data-dir=${electronProfilePath}`], {
     cwd: projectRoot,
     env: {
       ...process.env,

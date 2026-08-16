@@ -211,7 +211,46 @@ app
         if (options.matchMode === 'any') return tokens.some((token) => haystack.includes(token));
         return tokens.every((token) => haystack.includes(token));
       };
-      return documents.filter((document) => !document.deleted_at && matches(document)).map((document) => ({
+      const dateMatches = (document, column, filter) => {
+        if (filter.period === 'all') return true;
+        const value = new Date(document[column]).getTime();
+        let lower = null;
+        let upperExclusive = null;
+        if (filter.period === 'custom') {
+          if (filter.from) lower = new Date(filter.from + 'T00:00:00').getTime();
+          if (filter.to) {
+            const upper = new Date(filter.to + 'T00:00:00');
+            upper.setDate(upper.getDate() + 1);
+            upperExclusive = upper.getTime();
+          }
+        } else {
+          const start = new Date();
+          start.setHours(0, 0, 0, 0);
+          if (filter.period === 'thisYear') start.setMonth(0, 1);
+          else start.setDate(start.getDate() - ({ last7days: 6, last15days: 14, last30days: 29 }[filter.period] ?? 0));
+          lower = start.getTime();
+        }
+        return (lower === null || value >= lower) && (upperExclusive === null || value < upperExclusive);
+      };
+      const scopedFolderIds = new Set(options.folderSelection.folderIds);
+      let folderScopeGrew = true;
+      while (folderScopeGrew) {
+        folderScopeGrew = false;
+        for (const folder of folders) {
+          if (folder.parent_id !== null && scopedFolderIds.has(folder.parent_id) && !scopedFolderIds.has(folder.id)) {
+            scopedFolderIds.add(folder.id);
+            folderScopeGrew = true;
+          }
+        }
+      }
+      const folderFilterActive = scopedFolderIds.size > 0 || options.folderSelection.includeUnclassified;
+      const structuredMatches = (document) =>
+        (!folderFilterActive || scopedFolderIds.has(document.folder_id) || (options.folderSelection.includeUnclassified && document.folder_id === null)) &&
+        (options.statuses.length === 0 || options.statuses.includes(document.status)) &&
+        (!options.favoriteOnly || Boolean(document.favorite)) &&
+        dateMatches(document, 'created_at', options.created) &&
+        dateMatches(document, 'updated_at', options.modified);
+      return documents.filter((document) => !document.deleted_at && matches(document) && structuredMatches(document)).map((document) => ({
         id: document.id,
         title: document.title,
         folderId: document.folder_id,
@@ -493,7 +532,7 @@ app
         }
         const viewButtons = document.querySelectorAll('.nav-view-button');
         if (viewButtons.length !== 2) throw new Error('document view buttons missing');
-        if (expectedAppVersion !== '0.1.25') throw new Error('unexpected application version');
+        if (expectedAppVersion !== '0.1.26') throw new Error('unexpected application version');
         const initialExpandedState = JSON.parse(window.localStorage.getItem('textotheque:expanded-folders:v2') ?? '[]');
         if (initialExpandedState.length !== 0) throw new Error('folders should be closed by default');
         await waitFor(() => window.localStorage.getItem('textotheque:pane-layout:v2'), 'pane layout stored');
@@ -563,11 +602,19 @@ app
         setSearch('ancien');
         await waitFor(() => document.querySelector('.document-catalog') && document.querySelectorAll('.catalog-row').length === 0, 'active search excludes trash');
         const advancedPanel = document.querySelector('.advanced-search-panel');
-        if (!advancedPanel || advancedPanel.querySelectorAll('input[type="checkbox"]:checked').length !== 3 ||
+        if (!advancedPanel || advancedPanel.querySelectorAll('fieldset:first-child input[type="checkbox"]:checked').length !== 3 ||
             !advancedPanel.querySelector('input[type="radio"][value="all"]:checked')) {
           throw new Error('default advanced search criteria are incorrect');
         }
-        const fieldCheckboxes = Array.from(advancedPanel.querySelectorAll('input[type="checkbox"]'));
+        const defaultDateValues = Array.from(advancedPanel.querySelectorAll('.search-date-filter select')).map((select) => select.value);
+        if (advancedPanel.textContent.includes('Type') || advancedPanel.textContent.includes('Indifférent') ||
+            advancedPanel.querySelectorAll('.status-filter-options input:checked').length !== 0 ||
+            advancedPanel.querySelector('.favorite-only-filter input').checked ||
+            advancedPanel.querySelector('.folder-filter-menu summary strong').textContent !== 'Aucune branche' ||
+            !advancedPanel.textContent.includes('inclut ses sous-dossiers') || defaultDateValues.join(',') !== 'all,all') {
+          throw new Error('default structured search criteria are incorrect');
+        }
+        const fieldCheckboxes = Array.from(advancedPanel.querySelectorAll('fieldset:first-child input[type="checkbox"]'));
         fieldCheckboxes.forEach((checkbox) => checkbox.click());
         await waitFor(() => document.querySelector('.search-validation-message')?.textContent.includes('au moins une zone'), 'no search field validation');
         fieldCheckboxes.forEach((checkbox) => checkbox.click());
@@ -619,13 +666,45 @@ app
         await waitFor(() => document.querySelector('.folder-section'), 'clear search restores navigation');
         document.querySelector('.advanced-search-button').click();
         await waitFor(() => document.querySelector('.advanced-search-panel'), 'advanced search accessible with empty text');
-        const createdPeriodSelect = document.querySelector('.created-period-control select');
+        const createdPeriodSelect = document.querySelectorAll('.search-date-filter select')[0];
         Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(createdPeriodSelect, 'last7days');
         createdPeriodSelect.dispatchEvent(new Event('change', { bubbles: true }));
         await new Promise((resolve) => setTimeout(resolve, 310));
         await waitFor(() => document.querySelector('.document-catalog') && document.querySelector('.search-input-row input').value === '', 'date-only search');
+        const modifiedPeriodSelect = document.querySelectorAll('.search-date-filter select')[1];
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(modifiedPeriodSelect, 'last15days');
+        modifiedPeriodSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        await new Promise((resolve) => setTimeout(resolve, 310));
+
+        document.querySelector('.status-filter-options input[value="draft"]').click();
+        document.querySelector('.status-filter-options input[value="active"]').click();
+        await new Promise((resolve) => setTimeout(resolve, 310));
+        document.querySelector('.favorite-only-filter input').click();
+        await new Promise((resolve) => setTimeout(resolve, 310));
+
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(createdPeriodSelect, 'custom');
+        createdPeriodSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        await waitFor(() => document.querySelectorAll('.search-date-filter input[type="date"]').length === 2, 'custom created date inputs');
+        const customCreatedInputs = document.querySelectorAll('.search-date-filter')[0].querySelectorAll('input[type="date"]');
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(customCreatedInputs[0], '2026-08-16');
+        customCreatedInputs[0].dispatchEvent(new Event('change', { bubbles: true }));
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(customCreatedInputs[1], '2026-08-15');
+        customCreatedInputs[1].dispatchEvent(new Event('change', { bubbles: true }));
+        await waitFor(() => document.querySelector('.search-validation-message')?.textContent.includes('date de début'), 'reversed custom date validation');
+
+        document.querySelector('.reset-search-button').click();
+        await waitFor(() => !document.querySelector('.search-validation-message'), 'structured search reset clears validation');
+        const resetPanel = document.querySelector('.advanced-search-panel');
+        if (document.querySelector('.search-input-row input').value !== '' ||
+            resetPanel.querySelectorAll('input[type="checkbox"]:checked').length !== 3 ||
+            !resetPanel.querySelector('input[type="radio"][value="all"]:checked') ||
+            resetPanel.querySelector('.folder-filter-menu summary strong').textContent !== 'Aucune branche' ||
+            Array.from(resetPanel.querySelectorAll('.search-date-filter select')).map((select) => select.value).join(',') !== 'all,all') {
+          throw new Error('structured search reset did not restore all defaults');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 310));
         dispatchShortcut('Escape');
-        await waitFor(() => !document.querySelector('.document-catalog'), 'Escape exits date-only results');
+        await waitFor(() => !document.querySelector('.document-catalog'), 'Escape exits structured results');
         clickView('Tous les textes');
         await waitFor(() => document.querySelectorAll('.document-item').length >= 2, 'all documents restored');
 
@@ -756,6 +835,24 @@ app
         if ((await window.textotheque.listDocuments()).find((item) => item.title === 'Doc sous dossier')?.folder_id !== 2) {
           throw new Error('subfolder document did not keep subfolder folder_id');
         }
+        document.querySelector('.advanced-search-button').click();
+        await waitFor(() => document.querySelector('.advanced-search-panel'), 'advanced search with real folders');
+        const folderMenu = document.querySelector('.folder-filter-menu');
+        folderMenu.open = true;
+        const searchFolderLabels = Array.from(folderMenu.querySelectorAll('.folder-filter-option[title]')).map((option) => option.title);
+        if (!searchFolderLabels.includes('Notes memoire') || !searchFolderLabels.includes('Notes memoire › Nouveau dossier')) {
+          throw new Error('advanced folder paths do not expose the hierarchy');
+        }
+        folderMenu.querySelector('input[value="1"]').click();
+        await waitFor(
+          () => document.querySelector('.catalog-table-region')?.textContent.includes('Doc bouton dossier') && document.querySelector('.catalog-table-region')?.textContent.includes('Doc sous dossier'),
+          'parent branch structured filter includes descendant'
+        );
+        if (!folderMenu.querySelector('input[value="2"]').disabled || !folderMenu.textContent.includes('déjà inclus')) {
+          throw new Error('selected parent does not visibly cover its descendant');
+        }
+        dispatchShortcut('Escape');
+        await waitFor(() => !document.querySelector('.document-catalog'), 'Escape exits folder filter');
         Array.from(document.querySelectorAll('.folder-button'))
           .find((item) => item.textContent.includes('Notes memoire'))
           .click();
@@ -1126,7 +1223,13 @@ app
     if (searchRequests.some((request) => request.fields.length === 0) ||
         !searchRequests.some((request) => request.fields.join(',') === 'title,content,notes' && request.matchMode === 'all') ||
         !searchRequests.some((request) => request.matchMode === 'any') ||
-        !searchRequests.some((request) => request.query === '' && request.createdPeriod === 'last7days' && request.sortBy === 'created_at' && request.direction === 'desc') ||
+        !searchRequests.some((request) => request.query === '' && request.created.period === 'last7days' && request.modified.period === 'all' && request.sortBy === 'created_at' && request.direction === 'desc') ||
+        !searchRequests.some((request) => request.query === '' && request.created.period === 'last7days' && request.modified.period === 'last15days' && request.sortBy === 'updated_at' && request.direction === 'desc') ||
+        !searchRequests.some((request) => request.statuses.includes('draft') && request.statuses.includes('active')) ||
+        !searchRequests.some((request) => request.favoriteOnly === true) ||
+        !searchRequests.some((request) => request.folderSelection.folderIds.includes(1) && request.query === '' && request.sortBy === 'updated_at') ||
+        searchRequests.some((request) => request.created.period === 'custom' && request.created.from === '2026-08-16' && request.created.to === '2026-08-15') ||
+        !searchRequests.some((request) => request.query === '' && request.folderSelection.folderIds.length === 0 && !request.folderSelection.includeUnclassified && request.statuses.length === 0 && !request.favoriteOnly && request.created.period === 'all' && request.modified.period === 'all' && request.sortBy === 'updated_at') ||
         !searchRequests.some((request) => request.query === 'deuxieme' && request.sortBy === 'title' && request.direction === 'asc') ||
         !searchRequests.some((request) => request.query === 'premier lent') ||
         !searchRequests.some((request) => request.query === 'deuxieme rapide')) {
@@ -1368,7 +1471,16 @@ app
     }
 
     await window.webContents.executeJavaScript(`
-      (() => {
+      (async () => {
+        document.querySelector('.advanced-search-button').click();
+        const start = Date.now();
+        while (!document.querySelector('.advanced-search-panel') && Date.now() - start < 3000) {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        }
+        const folderCheckbox = document.querySelector('.folder-filter-menu input[value="2"]');
+        if (folderCheckbox) {
+          folderCheckbox.click();
+        }
         const input = document.querySelector('.search-input-row input');
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'ancienne recherche');
         input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1383,11 +1495,16 @@ app
           const libraryName = document.querySelector('.status-bar .library-name')?.textContent ?? '';
           const workspaceText = document.querySelector('.app-shell')?.textContent ?? '';
           if (libraryName.includes('library-b.sqlite') && document.querySelector('.status-bar')?.textContent.includes('1 document')) {
+            document.querySelector('.advanced-search-button').click();
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            const folderMenu = document.querySelector('.folder-filter-menu');
             return {
               ok: !document.querySelector('.title-input') &&
                 document.querySelector('.search-input-row input')?.value === '' &&
                 document.querySelector('.status-bar')?.textContent.includes('1 document') &&
-                !workspaceText.includes('Premier document'),
+                !workspaceText.includes('Premier document') &&
+                folderMenu?.querySelector('summary strong')?.textContent === 'Aucune branche' &&
+                !folderMenu?.querySelector('input[value="2"]'),
               libraryName,
               workspaceText,
             };

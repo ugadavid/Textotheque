@@ -929,7 +929,8 @@ npm.cmd run test:search
 - migration 3 vers 4 et reconstruction initiale FTS5 ;
 - synchronisation external-content et vérification d’intégrité ;
 - CI_AI fixe, zones, modes de correspondance et caractères spéciaux ;
-- périodes civiles locales, date seule et texte + date ;
+- filtres structurés SQL inclusifs sur branches de dossiers, statuts multiples, favoris, création et modification ;
+- périodes civiles locales, plages personnalisées, recherche sans texte et texte + filtres ;
 - snippets légers, corbeille, TODO et backup.
 
 ---
@@ -1099,7 +1100,7 @@ Fonctionnalités présentes notamment :
 - dirty state ;
 - confirmation anti-perte ;
 - recherche plein texte FTS5 CI_AI avec zones et modes explicites ;
-- filtre rapide de période de création ;
+- filtres structurés inclusifs sur branches de dossiers, statuts multiples, favoris et dates de création/modification ;
 - résultats dans le catalogue central avec pertinence et snippets ;
 - barre de statut ;
 - raccourcis clavier ;

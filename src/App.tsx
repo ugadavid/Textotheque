@@ -45,8 +45,10 @@ import type { DocumentInput, DocumentStatus, Folder, TextDocument } from './type
 import type { LibraryInfo, LibraryInspection, LibraryMenuAction, LibraryOpenResult } from './types/library';
 import type { TextExportDraft } from './types/text-export';
 import type {
-  CreatedPeriod,
+  DatePeriod,
+  SearchDateFilter,
   SearchDocument,
+  SearchFolderSelection,
   SearchMatchMode,
   SearchSortField,
   SearchTextField,
@@ -66,6 +68,19 @@ const EXPANDED_FOLDERS_STORAGE_KEY = 'textotheque:expanded-folders:v2';
 const UNTITLED_FALLBACK = 'Sans titre';
 const AUTOSAVE_DELAY_MS = 1500;
 const SEARCH_DEBOUNCE_MS = 250;
+
+function emptyDateFilter(): SearchDateFilter {
+  return { period: 'all', from: null, to: null };
+}
+
+function isDateFilterActive(filter: SearchDateFilter): boolean {
+  return filter.period !== 'all';
+}
+
+function validateDateRange(filter: SearchDateFilter): string | null {
+  if (filter.period !== 'custom' || !filter.from || !filter.to) return null;
+  return filter.from > filter.to ? 'La date de début doit précéder la date de fin.' : null;
+}
 
 interface DocumentSaveSnapshot {
   requestContext: number;
@@ -179,7 +194,14 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFields, setSearchFields] = useState<SearchTextField[]>(['title', 'content', 'notes']);
   const [searchMatchMode, setSearchMatchMode] = useState<SearchMatchMode>('all');
-  const [createdPeriod, setCreatedPeriod] = useState<CreatedPeriod>('all');
+  const [searchFolderSelection, setSearchFolderSelection] = useState<SearchFolderSelection>({
+    folderIds: [],
+    includeUnclassified: false,
+  });
+  const [searchStatuses, setSearchStatuses] = useState<DocumentStatus[]>([]);
+  const [searchFavoriteOnly, setSearchFavoriteOnly] = useState(false);
+  const [createdFilter, setCreatedFilter] = useState<SearchDateFilter>(emptyDateFilter);
+  const [modifiedFilter, setModifiedFilter] = useState<SearchDateFilter>(emptyDateFilter);
   const [searchResults, setSearchResults] = useState<SearchDocument[]>([]);
   const [searchResultsVisible, setSearchResultsVisible] = useState(false);
   const [advancedSearchExpanded, setAdvancedSearchExpanded] = useState(false);
@@ -270,6 +292,14 @@ export default function App() {
   }, [documentView, selectedFolder]);
   const selectedDocumentIsDeleted = Boolean(selectedDocument?.deleted_at);
   const selectedDocumentIsTodo = selectedDocument?.special_role === 'todo';
+  const hasStructuredSearchFilters =
+    searchFolderSelection.folderIds.length > 0 ||
+    searchFolderSelection.includeUnclassified ||
+    searchStatuses.length > 0 ||
+    searchFavoriteOnly ||
+    isDateFilterActive(createdFilter) ||
+    isDateFilterActive(modifiedFilter);
+  const hasActiveSearchCriteria = Boolean(searchQuery.trim() || hasStructuredSearchFilters);
   const isDirty = Boolean(
     selectedDocument &&
       (title !== titleForEditing(selectedDocument.title) ||
@@ -321,16 +351,32 @@ export default function App() {
       setSearchValidationMessage('Choisissez au moins une zone de recherche.');
       return;
     }
+    const dateValidationMessage = validateDateRange(createdFilter) ?? validateDateRange(modifiedFilter);
+    if (dateValidationMessage) {
+      setSearchResults([]);
+      setSearchLoading(false);
+      setSearchValidationMessage(dateValidationMessage);
+      return;
+    }
 
     setSearchValidationMessage(null);
     setSearchLoading(true);
+    const naturalSortBy: CatalogSortField = isDateFilterActive(modifiedFilter)
+      ? 'updated_at'
+      : isDateFilterActive(createdFilter)
+        ? 'created_at'
+        : 'updated_at';
     const timer = window.setTimeout(() => {
       void searchDocuments({
         query: searchQuery,
         fields: searchFields,
         matchMode: searchMatchMode,
-        createdPeriod,
-        sortBy: hasText ? searchSortBy : searchSortBy === 'relevance' ? 'created_at' : searchSortBy,
+        folderSelection: searchFolderSelection,
+        statuses: searchStatuses,
+        favoriteOnly: searchFavoriteOnly,
+        created: createdFilter,
+        modified: modifiedFilter,
+        sortBy: hasText ? searchSortBy : searchSortBy === 'relevance' ? naturalSortBy : searchSortBy,
         direction: hasText ? searchDirection : searchSortBy === 'relevance' ? 'desc' : searchDirection,
       }).then((rows) => {
         if (requestId !== searchRequestRef.current) return;
@@ -345,7 +391,19 @@ export default function App() {
     }, SEARCH_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timer);
-  }, [createdPeriod, searchDirection, searchFields, searchMatchMode, searchQuery, searchResultsVisible, searchSortBy]);
+  }, [
+    createdFilter,
+    modifiedFilter,
+    searchDirection,
+    searchFavoriteOnly,
+    searchFields,
+    searchFolderSelection,
+    searchMatchMode,
+    searchQuery,
+    searchResultsVisible,
+    searchSortBy,
+    searchStatuses,
+  ]);
 
   const focusEditor = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -960,7 +1018,15 @@ export default function App() {
     setFolderId(null);
     setSaveState('idle');
     setSearchQuery('');
-    setCreatedPeriod('all');
+    setSearchFields(['title', 'content', 'notes']);
+    setSearchMatchMode('all');
+    setSearchFolderSelection({ folderIds: [], includeUnclassified: false });
+    setSearchStatuses([]);
+    setSearchFavoriteOnly(false);
+    setCreatedFilter(emptyDateFilter());
+    setModifiedFilter(emptyDateFilter());
+    setSearchSortBy('relevance');
+    setSearchDirection('asc');
     restoreHiddenNavigationAfterSearchRef.current = false;
     window.localStorage.removeItem(EXPANDED_FOLDERS_STORAGE_KEY);
     setLibraryInfo(nextLibrary);
@@ -1197,7 +1263,11 @@ export default function App() {
   function clearSearchAndReturnToNavigation() {
     searchRequestRef.current += 1;
     setSearchQuery('');
-    setCreatedPeriod('all');
+    setSearchFolderSelection({ folderIds: [], includeUnclassified: false });
+    setSearchStatuses([]);
+    setSearchFavoriteOnly(false);
+    setCreatedFilter(emptyDateFilter());
+    setModifiedFilter(emptyDateFilter());
     setSearchResults([]);
     setSearchResultsVisible(false);
     setSearchLoading(false);
@@ -1221,17 +1291,38 @@ export default function App() {
     }
   }
 
+  function naturalStructuredSort(
+    created: SearchDateFilter = createdFilter,
+    modified: SearchDateFilter = modifiedFilter
+  ): CatalogSortField {
+    if (isDateFilterActive(modified)) return 'updated_at';
+    if (isDateFilterActive(created)) return 'created_at';
+    return 'updated_at';
+  }
+
+  function activateStructuredSearch(): void {
+    setSearchResultsVisible(true);
+    setAdvancedSearchExpanded(true);
+    setCatalogVisible(false);
+  }
+
+  function resetSortForCriteria(created = createdFilter, modified = modifiedFilter): void {
+    if (searchQuery.trim()) return;
+    setSearchSortBy(naturalStructuredSort(created, modified));
+    setSearchDirection('desc');
+  }
+
   function handleSearchChange(value: string) {
-    if (!value.trim() && searchQuery.trim() && createdPeriod === 'all') {
+    if (!value.trim() && searchQuery.trim() && !hasStructuredSearchFilters) {
       clearSearchAndReturnToNavigation();
       return;
     }
 
     setSearchQuery(value);
-    setSearchSortBy(value.trim() ? 'relevance' : 'created_at');
+    setSearchSortBy(value.trim() ? 'relevance' : naturalStructuredSort());
     setSearchDirection(value.trim() ? 'asc' : 'desc');
-    setSearchResultsVisible(Boolean(value.trim() || createdPeriod !== 'all'));
-    setAdvancedSearchExpanded(Boolean(value.trim() || createdPeriod !== 'all'));
+    setSearchResultsVisible(Boolean(value.trim() || hasStructuredSearchFilters));
+    setAdvancedSearchExpanded(Boolean(value.trim() || hasStructuredSearchFilters));
     setCatalogVisible(false);
     if (value.trim()) {
       setPaneLayout((current) => {
@@ -1249,7 +1340,7 @@ export default function App() {
     setSearchResultsVisible(true);
     setCatalogVisible(false);
     if (!searchQuery.trim()) {
-      setSearchSortBy('created_at');
+      setSearchSortBy(naturalStructuredSort());
       setSearchDirection('desc');
     }
   }
@@ -1280,17 +1371,74 @@ export default function App() {
     }
   }
 
-  function handleCreatedPeriodChange(period: CreatedPeriod): void {
-    setCreatedPeriod(period);
-    setSearchResultsVisible(Boolean(searchQuery.trim() || period !== 'all' || advancedSearchExpanded));
+  function handleSearchFolderChange(folderId: number, checked: boolean): void {
+    setSearchFolderSelection((current) => ({
+      ...current,
+      folderIds: checked
+        ? [...new Set([...current.folderIds, folderId])]
+        : current.folderIds.filter((candidate) => candidate !== folderId),
+    }));
+    activateStructuredSearch();
+    resetSortForCriteria();
+  }
+
+  function handleSearchUnclassifiedChange(checked: boolean): void {
+    setSearchFolderSelection((current) => ({ ...current, includeUnclassified: checked }));
+    activateStructuredSearch();
+    resetSortForCriteria();
+  }
+
+  function handleSearchStatusChange(nextStatus: DocumentStatus, checked: boolean): void {
+    setSearchStatuses((current) => checked
+      ? [...new Set([...current, nextStatus])]
+      : current.filter((candidate) => candidate !== nextStatus));
+    activateStructuredSearch();
+    resetSortForCriteria();
+  }
+
+  function handleSearchFavoriteChange(checked: boolean): void {
+    setSearchFavoriteOnly(checked);
+    activateStructuredSearch();
+    resetSortForCriteria();
+  }
+
+  function handleSearchDatePeriodChange(field: 'created' | 'modified', period: DatePeriod): void {
+    const nextFilter = (current: SearchDateFilter): SearchDateFilter => ({ ...current, period });
+    const nextCreated = field === 'created' ? nextFilter(createdFilter) : createdFilter;
+    const nextModified = field === 'modified' ? nextFilter(modifiedFilter) : modifiedFilter;
+    if (field === 'created') setCreatedFilter(nextCreated);
+    else setModifiedFilter(nextModified);
+    activateStructuredSearch();
+    resetSortForCriteria(nextCreated, nextModified);
+  }
+
+  function handleSearchDateBoundaryChange(
+    field: 'created' | 'modified',
+    boundary: 'from' | 'to',
+    value: string | null
+  ): void {
+    if (field === 'created') setCreatedFilter((current) => ({ ...current, [boundary]: value }));
+    else setModifiedFilter((current) => ({ ...current, [boundary]: value }));
+    activateStructuredSearch();
+    resetSortForCriteria();
+  }
+
+  function resetSearchCriteria(): void {
+    searchRequestRef.current += 1;
+    setSearchQuery('');
+    setSearchFields(['title', 'content', 'notes']);
+    setSearchMatchMode('all');
+    setSearchFolderSelection({ folderIds: [], includeUnclassified: false });
+    setSearchStatuses([]);
+    setSearchFavoriteOnly(false);
+    setCreatedFilter(emptyDateFilter());
+    setModifiedFilter(emptyDateFilter());
+    setSearchSortBy('updated_at');
+    setSearchDirection('desc');
+    setSearchValidationMessage(null);
+    setSearchResultsVisible(true);
+    setAdvancedSearchExpanded(true);
     setCatalogVisible(false);
-    if (searchQuery.trim()) {
-      setSearchSortBy('relevance');
-      setSearchDirection('asc');
-    } else {
-      setSearchSortBy('created_at');
-      setSearchDirection('desc');
-    }
   }
 
   function toggleNavigationPane() {
@@ -1334,7 +1482,7 @@ export default function App() {
           return;
         }
 
-        if (searchQuery.trim().length > 0 || createdPeriod !== 'all' || searchResultsVisible) {
+        if (hasActiveSearchCriteria || searchResultsVisible) {
           event.preventDefault();
           clearSearchAndReturnToNavigation();
         }
@@ -1447,16 +1595,27 @@ export default function App() {
           isTodo={selectedDocumentIsTodo}
           title={searchResultsVisible ? 'Résultats de recherche' : 'Tous les textes'}
           eyebrow={searchResultsVisible ? 'Recherche' : 'Bibliothèque'}
+          folders={folders}
           searchControls={{
             expanded: advancedSearchExpanded,
             fields: searchFields,
             matchMode: searchMatchMode,
-            createdPeriod,
+            folderSelection: searchFolderSelection,
+            statuses: searchStatuses,
+            favoriteOnly: searchFavoriteOnly,
+            created: createdFilter,
+            modified: modifiedFilter,
             validationMessage: searchValidationMessage,
             onToggleExpanded: toggleAdvancedSearch,
             onFieldChange: handleSearchFieldChange,
             onMatchModeChange: handleSearchMatchModeChange,
-            onCreatedPeriodChange: handleCreatedPeriodChange,
+            onFolderChange: handleSearchFolderChange,
+            onUnclassifiedChange: handleSearchUnclassifiedChange,
+            onStatusChange: handleSearchStatusChange,
+            onFavoriteChange: handleSearchFavoriteChange,
+            onDatePeriodChange: handleSearchDatePeriodChange,
+            onDateBoundaryChange: handleSearchDateBoundaryChange,
+            onReset: resetSearchCriteria,
           }}
           onSort={handleCatalogSort}
           onOpenDocument={(id) => { void handleSelectDocument(id, 'all', null); }}
@@ -1475,7 +1634,7 @@ export default function App() {
           notice={libraryNotice}
           isDeleted={selectedDocumentIsDeleted}
           isTodo={selectedDocumentIsTodo}
-          advancedSearchActive={Boolean(searchQuery.trim() || createdPeriod !== 'all')}
+          advancedSearchActive={hasActiveSearchCriteria}
           searchQuery={searchQuery}
           onTitleChange={(value) => {
             setTitle(value);

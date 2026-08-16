@@ -163,7 +163,10 @@ function exerciseMigratedDocument(db, title, expectedContent) {
   assert(foldered.folder_id === folder.id, `Le document ${title} ne peut pas utiliser les dossiers apres migration.`);
   assert(db.listFolders().some((candidate) => candidate.id === folder.id), 'Le dossier cree est absent de la liste.');
   const searchResults = db.searchDocuments({
-    query: 'conserve', fields: ['content'], matchMode: 'all', createdPeriod: 'all', sortBy: 'relevance', direction: 'asc',
+    query: 'conserve', fields: ['content'], matchMode: 'all',
+    folderSelection: { folderIds: [], includeUnclassified: false }, statuses: [], favoriteOnly: false,
+    created: { period: 'all', from: null, to: null }, modified: { period: 'all', from: null, to: null },
+    sortBy: 'relevance', direction: 'asc',
   });
   assert(searchResults.some((candidate) => candidate.id === document.id), `Le document ${title} n est pas indexe apres migration.`);
   db.verifyFullTextIndex();

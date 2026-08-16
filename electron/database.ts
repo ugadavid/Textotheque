@@ -15,8 +15,20 @@ export type CatalogSortField =
 export type CatalogSortDirection = 'asc' | 'desc';
 export type SearchTextField = 'title' | 'content' | 'notes';
 export type SearchMatchMode = 'all' | 'any' | 'phrase';
-export type CreatedPeriod = 'all' | 'last7days' | 'last15days' | 'last30days' | 'thisYear';
+export type DatePeriod = 'all' | 'last7days' | 'last15days' | 'last30days' | 'thisYear' | 'custom';
+export type CreatedPeriod = Exclude<DatePeriod, 'custom'>;
 export type SearchSortField = 'relevance' | CatalogSortField;
+
+export interface SearchDateFilter {
+  period: DatePeriod;
+  from: string | null;
+  to: string | null;
+}
+
+export interface SearchFolderSelection {
+  folderIds: number[];
+  includeUnclassified: boolean;
+}
 
 export interface DocumentCatalogOptions {
   sortBy: CatalogSortField;
@@ -44,7 +56,11 @@ export interface SearchDocumentsOptions {
   query: string;
   fields: SearchTextField[];
   matchMode: SearchMatchMode;
-  createdPeriod: CreatedPeriod;
+  folderSelection: SearchFolderSelection;
+  statuses: DocumentStatus[];
+  favoriteOnly: boolean;
+  created: SearchDateFilter;
+  modified: SearchDateFilter;
   sortBy: SearchSortField;
   direction: CatalogSortDirection;
 }
@@ -129,7 +145,7 @@ export function quoteFts5Value(value: string): string {
   return `"${value.replace(/"/g, '""')}"`;
 }
 
-export function createdPeriodStartIso(period: CreatedPeriod, referenceDate = new Date()): string | null {
+export function datePeriodStartIso(period: CreatedPeriod, referenceDate = new Date()): string | null {
   if (period === 'all') return null;
   const start = new Date(referenceDate);
   start.setHours(0, 0, 0, 0);
@@ -143,10 +159,54 @@ export function createdPeriodStartIso(period: CreatedPeriod, referenceDate = new
     last30days: 30,
   };
   if (!Object.prototype.hasOwnProperty.call(dayCounts, period)) {
-    throw new Error(`Période de création inconnue: ${String(period)}.`);
+    throw new Error(`Période de date inconnue: ${String(period)}.`);
   }
   start.setDate(start.getDate() - (dayCounts[period as keyof typeof dayCounts] - 1));
   return start.toISOString();
+}
+
+export function createdPeriodStartIso(period: CreatedPeriod, referenceDate = new Date()): string | null {
+  return datePeriodStartIso(period, referenceDate);
+}
+
+export interface SearchDateBounds {
+  lower: string | null;
+  upperExclusive: string | null;
+}
+
+function parseLocalCivilDate(value: string, label: string): Date {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) throw new Error(`${label} doit être une date civile valide.`);
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day, 0, 0, 0, 0);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) {
+    throw new Error(`${label} doit être une date civile valide.`);
+  }
+  return date;
+}
+
+export function searchDateBounds(filter: SearchDateFilter, referenceDate = new Date()): SearchDateBounds {
+  const allowedPeriods: DatePeriod[] = ['all', 'last7days', 'last15days', 'last30days', 'thisYear', 'custom'];
+  if (!filter || !allowedPeriods.includes(filter.period)) {
+    throw new Error(`Période de recherche inconnue: ${String(filter?.period)}.`);
+  }
+  if (filter.period === 'all') return { lower: null, upperExclusive: null };
+  if (filter.period !== 'custom') {
+    return { lower: datePeriodStartIso(filter.period, referenceDate), upperExclusive: null };
+  }
+
+  const fromDate = filter.from ? parseLocalCivilDate(filter.from, 'La date de début') : null;
+  const toDate = filter.to ? parseLocalCivilDate(filter.to, 'La date de fin') : null;
+  if (fromDate && toDate && fromDate.getTime() > toDate.getTime()) {
+    throw new Error('La date de début doit précéder la date de fin.');
+  }
+  if (toDate) toDate.setDate(toDate.getDate() + 1);
+  return {
+    lower: fromDate?.toISOString() ?? null,
+    upperExclusive: toDate?.toISOString() ?? null,
+  };
 }
 
 export function buildSafeFtsQuery(query: string, fields: SearchTextField[], matchMode: SearchMatchMode): string {
@@ -174,6 +234,83 @@ export function buildSafeFtsQuery(query: string, fields: SearchTextField[], matc
         .map((term) => `${quoteFts5Value(term)}*`)
         .join(matchMode === 'all' ? ' AND ' : matchMode === 'any' ? ' OR ' : '');
   return `{${selectedColumns}} : (${expression})`;
+}
+
+interface StructuredSearchSql {
+  commonTableExpression: string;
+  predicates: string[];
+  parameters: Record<string, string | number>;
+}
+
+function buildStructuredSearchSql(options: SearchDocumentsOptions, referenceDate: Date): StructuredSearchSql {
+  const predicates = ['d.deleted_at IS NULL'];
+  const parameters: Record<string, string | number> = {};
+
+  if (!options.folderSelection || !Array.isArray(options.folderSelection.folderIds) ||
+      typeof options.folderSelection.includeUnclassified !== 'boolean') {
+    throw new Error('Sélection de dossiers invalide.');
+  }
+  const folderIds = [...new Set(options.folderSelection.folderIds)];
+  if (folderIds.some((folderId) => !Number.isSafeInteger(folderId) || folderId <= 0)) {
+    throw new Error('La sélection de dossiers contient un identifiant invalide.');
+  }
+  const selectedFolderSql = folderIds.map((folderId, index) => {
+    parameters[`folderId${index}`] = folderId;
+    return `SELECT @folderId${index} AS id`;
+  }).join('\n  UNION\n  ');
+  const commonTableExpression = folderIds.length > 0
+    ? `WITH RECURSIVE selected_folders(id) AS (
+  ${selectedFolderSql}
+), folder_scope(id) AS (
+  SELECT id FROM selected_folders
+  UNION
+  SELECT f.id
+  FROM folders f
+  JOIN folder_scope parent ON f.parent_id = parent.id
+)`
+    : '';
+  if (folderIds.length > 0 && options.folderSelection.includeUnclassified) {
+    predicates.push('(d.folder_id IN (SELECT id FROM folder_scope) OR d.folder_id IS NULL)');
+  } else if (folderIds.length > 0) {
+    predicates.push('d.folder_id IN (SELECT id FROM folder_scope)');
+  } else if (options.folderSelection.includeUnclassified) {
+    predicates.push('d.folder_id IS NULL');
+  }
+
+  const statuses: DocumentStatus[] = ['draft', 'active', 'to_review', 'final', 'archived'];
+  if (!Array.isArray(options.statuses)) throw new Error('Sélection de statuts invalide.');
+  const selectedStatuses = [...new Set(options.statuses)];
+  if (selectedStatuses.some((status) => !statuses.includes(status))) {
+    throw new Error('La sélection contient un statut inconnu.');
+  }
+  if (selectedStatuses.length > 0) {
+    const placeholders = selectedStatuses.map((status, index) => {
+      parameters[`status${index}`] = status;
+      return `@status${index}`;
+    });
+    predicates.push(`d.status IN (${placeholders.join(', ')})`);
+  }
+
+  if (typeof options.favoriteOnly !== 'boolean') throw new Error('Filtre favori invalide.');
+  if (options.favoriteOnly) predicates.push('d.favorite = 1');
+
+  const dateFilters: Array<{ column: 'created_at' | 'updated_at'; prefix: 'created' | 'modified'; filter: SearchDateFilter }> = [
+    { column: 'created_at', prefix: 'created', filter: options.created },
+    { column: 'updated_at', prefix: 'modified', filter: options.modified },
+  ];
+  for (const { column, prefix, filter } of dateFilters) {
+    const bounds = searchDateBounds(filter, referenceDate);
+    if (bounds.lower) {
+      predicates.push(`d.${column} >= @${prefix}Lower`);
+      parameters[`${prefix}Lower`] = bounds.lower;
+    }
+    if (bounds.upperExclusive) {
+      predicates.push(`d.${column} < @${prefix}UpperExclusive`);
+      parameters[`${prefix}UpperExclusive`] = bounds.upperExclusive;
+    }
+  }
+
+  return { commonTableExpression, predicates, parameters };
 }
 
 export function localDocumentTitleDate(date: Date): string {
@@ -928,7 +1065,6 @@ export class TextothequeDatabase {
 
   searchDocuments(options: SearchDocumentsOptions, referenceDate = new Date()): SearchDocument[] {
     const trimmedQuery = options?.query?.trim() ?? '';
-    const createdAfter = createdPeriodStartIso(options?.createdPeriod, referenceDate);
     const sqlDirection = options?.direction === 'asc'
       ? 'ASC'
       : options?.direction === 'desc'
@@ -959,11 +1095,13 @@ export class TextothequeDatabase {
           ...sortExpressions[sortBy as CatalogSortField].map((expression) => `${expression} ${sqlDirection}`),
           `d.id ${sqlDirection}`,
         ].join(', ');
-    const createdClause = createdAfter ? 'AND d.created_at >= @createdAfter' : '';
+    const structured = buildStructuredSearchSql(options, referenceDate);
+    const structuredWhere = structured.predicates.join('\n           AND ');
 
     if (!trimmedQuery) {
       const rows = this.db.prepare(
-        `SELECT d.id AS id,
+        `${structured.commonTableExpression}
+         SELECT d.id AS id,
                 d.title AS title,
                 d.folder_id AS folderId,
                 f.name AS folderName,
@@ -976,16 +1114,16 @@ export class TextothequeDatabase {
                 NULL AS relevance
          FROM documents d
          LEFT JOIN folders f ON f.id = d.folder_id
-         WHERE d.deleted_at IS NULL
-         ${createdClause}
+         WHERE ${structuredWhere}
          ORDER BY ${orderBy}`
-      ).all(createdAfter ? { createdAfter } : {}) as Array<Omit<SearchDocument, 'favorite'> & { favorite: number }>;
+      ).all(structured.parameters) as Array<Omit<SearchDocument, 'favorite'> & { favorite: number }>;
       return rows.map((row) => ({ ...row, favorite: row.favorite === 1 }));
     }
 
     const ftsQuery = buildSafeFtsQuery(trimmedQuery, options.fields, options.matchMode);
     const rows = this.db.prepare(
-      `SELECT d.id AS id,
+      `${structured.commonTableExpression}
+       SELECT d.id AS id,
               d.title AS title,
               d.folder_id AS folderId,
               f.name AS folderName,
@@ -1000,14 +1138,13 @@ export class TextothequeDatabase {
        JOIN documents d ON d.id = documents_fts.rowid
        LEFT JOIN folders f ON f.id = d.folder_id
        WHERE documents_fts MATCH @ftsQuery
-         AND d.deleted_at IS NULL
-         ${createdClause}
+         AND ${structuredWhere}
        ORDER BY ${orderBy}`
     ).all({
       ftsQuery,
       snippetStart: SEARCH_SNIPPET_START,
       snippetEnd: SEARCH_SNIPPET_END,
-      ...(createdAfter ? { createdAfter } : {}),
+      ...structured.parameters,
     }) as Array<Omit<SearchDocument, 'favorite'> & { favorite: number }>;
     return rows.map((row) => ({ ...row, favorite: row.favorite === 1 }));
   }

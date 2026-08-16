@@ -1,17 +1,36 @@
 import type { ReactNode } from 'react';
 import type { CatalogDocument, CatalogSortDirection, CatalogSortField } from '../types/catalog';
-import type { CreatedPeriod, SearchDocument, SearchMatchMode, SearchSortField, SearchTextField } from '../types/search';
+import type { DocumentStatus, Folder } from '../types/document';
+import type {
+  DatePeriod,
+  SearchDateFilter,
+  SearchDocument,
+  SearchFolderSelection,
+  SearchMatchMode,
+  SearchSortField,
+  SearchTextField,
+} from '../types/search';
 
 interface SearchControls {
   expanded: boolean;
   fields: SearchTextField[];
   matchMode: SearchMatchMode;
-  createdPeriod: CreatedPeriod;
+  folderSelection: SearchFolderSelection;
+  statuses: DocumentStatus[];
+  favoriteOnly: boolean;
+  created: SearchDateFilter;
+  modified: SearchDateFilter;
   validationMessage: string | null;
   onToggleExpanded: () => void;
   onFieldChange: (field: SearchTextField, checked: boolean) => void;
   onMatchModeChange: (mode: SearchMatchMode) => void;
-  onCreatedPeriodChange: (period: CreatedPeriod) => void;
+  onFolderChange: (folderId: number, checked: boolean) => void;
+  onUnclassifiedChange: (checked: boolean) => void;
+  onStatusChange: (status: DocumentStatus, checked: boolean) => void;
+  onFavoriteChange: (checked: boolean) => void;
+  onDatePeriodChange: (field: 'created' | 'modified', period: DatePeriod) => void;
+  onDateBoundaryChange: (field: 'created' | 'modified', boundary: 'from' | 'to', value: string | null) => void;
+  onReset: () => void;
 }
 
 interface DocumentCatalogProps {
@@ -27,6 +46,7 @@ interface DocumentCatalogProps {
   isTodo: boolean;
   title: string;
   eyebrow: string;
+  folders: Folder[];
   searchControls: SearchControls;
   onSort: (field: CatalogSortField) => void;
   onOpenDocument: (id: number) => void;
@@ -45,6 +65,85 @@ const columns: Array<{ field: CatalogSortField; label: string; className: string
   { field: 'created_at', label: 'Créé', className: 'catalog-date-column' },
   { field: 'updated_at', label: 'Modifié', className: 'catalog-date-column' },
 ];
+
+const statuses: Array<[DocumentStatus, string]> = [
+  ['draft', 'Brouillon'],
+  ['active', 'Actif'],
+  ['to_review', 'À revoir'],
+  ['final', 'Final'],
+  ['archived', 'Archivé'],
+];
+
+function folderDisplayPath(folder: Folder, foldersById: Map<number, Folder>): string {
+  const parts = [folder.name];
+  const visited = new Set([folder.id]);
+  let parentId = folder.parent_id;
+  while (parentId !== null && !visited.has(parentId)) {
+    visited.add(parentId);
+    const parent = foldersById.get(parentId);
+    if (!parent) break;
+    parts.unshift(parent.name);
+    parentId = parent.parent_id;
+  }
+  return parts.join(' › ');
+}
+
+function folderDepth(folder: Folder, foldersById: Map<number, Folder>): number {
+  let depth = 0;
+  const visited = new Set([folder.id]);
+  let parentId = folder.parent_id;
+  while (parentId !== null && !visited.has(parentId)) {
+    visited.add(parentId);
+    const parent = foldersById.get(parentId);
+    if (!parent) break;
+    depth += 1;
+    parentId = parent.parent_id;
+  }
+  return depth;
+}
+
+function hasSelectedAncestor(folder: Folder, foldersById: Map<number, Folder>, selectedIds: Set<number>): boolean {
+  const visited = new Set([folder.id]);
+  let parentId = folder.parent_id;
+  while (parentId !== null && !visited.has(parentId)) {
+    if (selectedIds.has(parentId)) return true;
+    visited.add(parentId);
+    parentId = foldersById.get(parentId)?.parent_id ?? null;
+  }
+  return false;
+}
+
+function DateFilterControl({
+  field,
+  label,
+  value,
+  onPeriodChange,
+  onBoundaryChange,
+}: {
+  field: 'created' | 'modified';
+  label: string;
+  value: SearchDateFilter;
+  onPeriodChange: SearchControls['onDatePeriodChange'];
+  onBoundaryChange: SearchControls['onDateBoundaryChange'];
+}) {
+  return <div className="search-date-filter">
+    <label className="search-select-control">
+      <span>{label}</span>
+      <select value={value.period} onChange={(event) => onPeriodChange(field, event.currentTarget.value as DatePeriod)}>
+        <option value="all">Toutes dates</option>
+        <option value="last7days">7 derniers jours</option>
+        <option value="last15days">15 derniers jours</option>
+        <option value="last30days">30 derniers jours</option>
+        <option value="thisYear">Cette année</option>
+        <option value="custom">Plage personnalisée…</option>
+      </select>
+    </label>
+    {value.period === 'custom' ? <div className="custom-date-range">
+      <label>Du <input type="date" value={value.from ?? ''} onChange={(event) => onBoundaryChange(field, 'from', event.currentTarget.value || null)} /></label>
+      <label>Au <input type="date" value={value.to ?? ''} onChange={(event) => onBoundaryChange(field, 'to', event.currentTarget.value || null)} /></label>
+    </div> : null}
+  </div>;
+}
 
 function formatCatalogDate(value: string): string {
   const date = new Date(value);
@@ -88,6 +187,7 @@ export default function DocumentCatalog({
   isTodo,
   title,
   eyebrow,
+  folders,
   searchControls,
   onSort,
   onOpenDocument,
@@ -97,6 +197,19 @@ export default function DocumentCatalog({
   onToggleMetadata,
   onOpenTodo,
 }: DocumentCatalogProps) {
+  const foldersById = new Map(folders.map((folder) => [folder.id, folder]));
+  const selectedFolderIds = new Set(searchControls.folderSelection.folderIds);
+  const folderOptions = folders.map((folder) => ({
+    folder,
+    depth: folderDepth(folder, foldersById),
+    path: folderDisplayPath(folder, foldersById),
+    coveredByAncestor: hasSelectedAncestor(folder, foldersById, selectedFolderIds),
+  }));
+  const selectedBranchCount = searchControls.folderSelection.folderIds.length;
+  const folderSummary = selectedBranchCount === 0
+    ? searchControls.folderSelection.includeUnclassified ? 'Non classé' : 'Aucune branche'
+    : `${selectedBranchCount} branche${selectedBranchCount > 1 ? 's' : ''}${searchControls.folderSelection.includeUnclassified ? ' + non classé' : ''}`;
+
   return (
     <section className="pane editor-pane document-catalog" aria-labelledby="catalog-title">
       <header className="editor-toolbar catalog-header">
@@ -194,19 +307,52 @@ export default function DocumentCatalog({
             {label}
           </label>)}
         </fieldset>
-        <label className="created-period-control">
-          <span>Créés</span>
-          <select
-            value={searchControls.createdPeriod}
-            onChange={(event) => searchControls.onCreatedPeriodChange(event.currentTarget.value as CreatedPeriod)}
-          >
-            <option value="all">Toutes dates</option>
-            <option value="last7days">7 derniers jours</option>
-            <option value="last15days">15 derniers jours</option>
-            <option value="last30days">30 derniers jours</option>
-            <option value="thisYear">Cette année</option>
-          </select>
-        </label>
+        <div className="structured-search-controls">
+          <details className="folder-filter-menu">
+            <summary><span>Dossiers</span><strong>{folderSummary}</strong></summary>
+            <div className="folder-filter-popover">
+              <label className="folder-filter-option unclassified-option">
+                <input type="checkbox" checked={searchControls.folderSelection.includeUnclassified} onChange={(event) => searchControls.onUnclassifiedChange(event.currentTarget.checked)} />
+                Non classé
+              </label>
+              <div className="folder-filter-tree">
+                {folderOptions.map(({ folder, depth, path, coveredByAncestor }) => <label
+                  className={coveredByAncestor ? 'folder-filter-option ancestor-covered' : 'folder-filter-option'}
+                  key={folder.id}
+                  style={{ paddingLeft: `${8 + depth * 16}px` }}
+                  title={path}
+                >
+                  <input
+                    type="checkbox"
+                    value={folder.id}
+                    checked={selectedFolderIds.has(folder.id)}
+                    disabled={coveredByAncestor}
+                    onChange={(event) => searchControls.onFolderChange(folder.id, event.currentTarget.checked)}
+                  />
+                  <span>{folder.name}</span>
+                  {coveredByAncestor ? <small>déjà inclus</small> : null}
+                </label>)}
+              </div>
+              <p>Un dossier sélectionné inclut ses sous-dossiers.</p>
+            </div>
+          </details>
+          <fieldset className="status-filter-options">
+            <legend>Statuts</legend>
+            {statuses.map(([value, label]) => <label key={value}>
+              <input type="checkbox" value={value} checked={searchControls.statuses.includes(value)} onChange={(event) => searchControls.onStatusChange(value, event.currentTarget.checked)} />
+              {label}
+            </label>)}
+          </fieldset>
+          <label className="favorite-only-filter">
+            <input type="checkbox" checked={searchControls.favoriteOnly} onChange={(event) => searchControls.onFavoriteChange(event.currentTarget.checked)} />
+            Favoris seulement
+          </label>
+        </div>
+        <div className="search-date-controls">
+          <DateFilterControl field="created" label="Créé" value={searchControls.created} onPeriodChange={searchControls.onDatePeriodChange} onBoundaryChange={searchControls.onDateBoundaryChange} />
+          <DateFilterControl field="modified" label="Modifié" value={searchControls.modified} onPeriodChange={searchControls.onDatePeriodChange} onBoundaryChange={searchControls.onDateBoundaryChange} />
+        </div>
+        <button className="reset-search-button" type="button" onClick={searchControls.onReset}>Réinitialiser</button>
         {searchControls.validationMessage ? <p className="search-validation-message" role="status">{searchControls.validationMessage}</p> : null}
       </section> : null}
 

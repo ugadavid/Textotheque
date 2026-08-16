@@ -21,7 +21,11 @@ function options(query, overrides = {}) {
     query,
     fields: ['title', 'content', 'notes'],
     matchMode: 'all',
-    createdPeriod: 'all',
+    folderSelection: { folderIds: [], includeUnclassified: false },
+    statuses: [],
+    favoriteOnly: false,
+    created: { period: 'all', from: null, to: null },
+    modified: { period: 'all', from: null, to: null },
     sortBy: hasText ? 'relevance' : 'created_at',
     direction: hasText ? 'asc' : 'desc',
     ...overrides,
@@ -101,6 +105,7 @@ app.whenReady().then(async () => {
       createdPeriodStartIso,
       inspectTextothequeLibrary,
       quoteFts5Value,
+      searchDateBounds,
     } = await import('../dist-electron/database.js');
 
     assert(CURRENT_SCHEMA_VERSION === 4, 'La recherche doit utiliser le schema 4.');
@@ -168,6 +173,70 @@ app.whenReady().then(async () => {
     assert(ids(db.searchDocuments(options('notesecrete', { fields: ['notes'] }))).has(notesPrefix.id), 'Le prefixe present dans les notes est absent.');
     assert(!ids(db.searchDocuments(options('notesecrete', { fields: ['title', 'content'] }))).has(notesPrefix.id), 'Le prefixe des notes fuit dans une zone non selectionnee.');
 
+    const createNamedFolder = (name, parentId = null) => {
+      const folder = db.createFolder(parentId);
+      return db.renameFolder(folder.id, name);
+    };
+    const folderA = createNamedFolder('A');
+    const folderA1 = createNamedFolder('A1', folderA.id);
+    const folderA1a = createNamedFolder('A1a', folderA1.id);
+    const folderA2 = createNamedFolder('A2', folderA.id);
+    const folderB = createNamedFolder('B');
+    const folderB1 = createNamedFolder('B1', folderB.id);
+    const branchDocuments = new Map();
+    for (const folder of [folderA, folderA1, folderA1a, folderA2, folderB, folderB1]) {
+      const document = db.updateDocument(db.createDocument(folder.id).id, {
+        title: `branchefiltre ${folder.name}`, content: `termebranche ${folder.name}`, notes: '', status: 'active', favorite: false, folder_id: folder.id,
+      });
+      branchDocuments.set(folder.name, document.id);
+    }
+    const allFolders = ids(db.searchDocuments(options('', { sortBy: 'updated_at', direction: 'desc' })));
+    assert([...branchDocuments.values()].every((id) => allFolders.has(id)) && allFolders.has(todoDocument.id), 'Une sélection de dossiers vide doit tout conserver.');
+    const branchA = ids(db.searchDocuments(options('', { folderSelection: { folderIds: [folderA.id], includeUnclassified: false }, sortBy: 'updated_at', direction: 'desc' })));
+    assert(['A', 'A1', 'A1a', 'A2'].every((name) => branchA.has(branchDocuments.get(name))), 'La branche A ne contient pas tous ses descendants.');
+    assert(!branchA.has(branchDocuments.get('B')) && !branchA.has(branchDocuments.get('B1')), 'La branche A fuit dans la branche B.');
+    const multipleBranches = ids(db.searchDocuments(options('', { folderSelection: { folderIds: [folderA1.id, folderB.id], includeUnclassified: false }, sortBy: 'updated_at', direction: 'desc' })));
+    assert(['A1', 'A1a', 'B', 'B1'].every((name) => multipleBranches.has(branchDocuments.get(name))), 'L union A1 + B est incomplete.');
+    assert(!multipleBranches.has(branchDocuments.get('A')) && !multipleBranches.has(branchDocuments.get('A2')), 'L union A1 + B inclut un dossier hors portée.');
+    const unclassifiedOnly = ids(db.searchDocuments(options('', { folderSelection: { folderIds: [], includeUnclassified: true }, sortBy: 'updated_at', direction: 'desc' })));
+    assert(unclassifiedOnly.has(todoDocument.id) && !unclassifiedOnly.has(branchDocuments.get('A')), 'Le filtre Non classé est incorrect.');
+    const branchAndUnclassified = ids(db.searchDocuments(options('', { folderSelection: { folderIds: [folderA.id], includeUnclassified: true }, sortBy: 'updated_at', direction: 'desc' })));
+    assert(branchAndUnclassified.has(todoDocument.id) && branchAndUnclassified.has(branchDocuments.get('A1a')) && !branchAndUnclassified.has(branchDocuments.get('B')), 'Branche A + Non classé est incorrect.');
+    const redundantRoots = db.searchDocuments(options('branchefiltre', { fields: ['title'], folderSelection: { folderIds: [folderA.id, folderA1.id], includeUnclassified: false } }));
+    assert(redundantRoots.length === new Set(redundantRoots.map((row) => row.id)).size, 'Un parent et son enfant produisent des doublons.');
+    const textInBranch = ids(db.searchDocuments(options('termebranche', { fields: ['content'], folderSelection: { folderIds: [folderA.id], includeUnclassified: false } })));
+    assert(textInBranch.has(branchDocuments.get('A1a')) && !textInBranch.has(branchDocuments.get('B1')), 'Texte + branche recursive est incorrect.');
+
+    const statusDocuments = new Map();
+    for (const candidateStatus of ['draft', 'active', 'to_review', 'final', 'archived']) {
+      const document = db.updateDocument(db.createDocument().id, {
+        title: `statutfiltre ${candidateStatus}`, content: '', notes: '', status: candidateStatus, favorite: false, folder_id: null,
+      });
+      statusDocuments.set(candidateStatus, document.id);
+      const matches = ids(db.searchDocuments(options('statutfiltre', { fields: ['title'], statuses: [candidateStatus] })));
+      assert(matches.has(document.id), `Le filtre statut ${candidateStatus} echoue.`);
+      for (const [otherStatus, otherId] of statusDocuments) {
+        if (otherStatus !== candidateStatus) assert(!matches.has(otherId), `Le filtre statut ${candidateStatus} accepte ${otherStatus}.`);
+      }
+    }
+    let invalidStatusError = null;
+    const statusUnion = ids(db.searchDocuments(options('statutfiltre', { fields: ['title'], statuses: ['draft', 'active'] })));
+    assert(statusUnion.has(statusDocuments.get('draft')) && statusUnion.has(statusDocuments.get('active')) && !statusUnion.has(statusDocuments.get('final')), 'L union draft + active est incorrecte.');
+    try { db.searchDocuments(options('', { statuses: ['invente'], sortBy: 'updated_at', direction: 'desc' })); } catch (error) { invalidStatusError = error; }
+    assert(invalidStatusError instanceof Error, 'Un statut hors domaine doit etre refuse.');
+
+    const favoriteYesDocument = db.updateDocument(db.createDocument().id, {
+      title: 'favorifiltre oui', content: '', notes: '', status: 'active', favorite: true, folder_id: null,
+    });
+    const favoriteNoDocument = db.updateDocument(db.createDocument().id, {
+      title: 'favorifiltre non', content: '', notes: '', status: 'active', favorite: false, folder_id: null,
+    });
+    const favoriteAll = ids(db.searchDocuments(options('favorifiltre', { fields: ['title'], favoriteOnly: false })));
+    assert(favoriteAll.has(favoriteYesDocument.id) && favoriteAll.has(favoriteNoDocument.id), 'favoriteOnly=false ne conserve pas les deux valeurs.');
+    const favoriteYes = ids(db.searchDocuments(options('', { favoriteOnly: true, sortBy: 'updated_at', direction: 'desc' })));
+    assert(favoriteYes.has(favoriteYesDocument.id) && !favoriteYes.has(favoriteNoDocument.id), 'Favoris seulement est incorrect.');
+    assert(ids(db.searchDocuments(options('', { sortBy: 'updated_at', direction: 'desc' }))).has(todoDocument.id), 'Le TODO doit rester inclus sans filtre spécial.');
+
     const zoneDocument = db.listDocuments().find((item) => item.title === 'Document zones');
     assert(zoneDocument, 'Fixture zones absente.');
     db.updateDocument(zoneDocument.id, {
@@ -220,6 +289,13 @@ app.whenReady().then(async () => {
     assert(createdPeriodStartIso('last15days', referenceDate) === new Date(2026, 7, 2, 0, 0, 0, 0).toISOString(), 'Borne locale 15 jours incorrecte.');
     assert(createdPeriodStartIso('last30days', referenceDate) === new Date(2026, 6, 18, 0, 0, 0, 0).toISOString(), 'Borne locale 30 jours incorrecte.');
     assert(createdPeriodStartIso('thisYear', referenceDate) === new Date(2026, 0, 1, 0, 0, 0, 0).toISOString(), 'Borne locale annee incorrecte.');
+    assert(searchDateBounds({ period: 'custom', from: '2026-08-10', to: '2026-08-15' }, referenceDate).lower === new Date(2026, 7, 10).toISOString(), 'Borne custom basse incorrecte.');
+    assert(searchDateBounds({ period: 'custom', from: '2026-08-10', to: '2026-08-15' }, referenceDate).upperExclusive === new Date(2026, 7, 16).toISOString(), 'Borne custom haute exclusive incorrecte.');
+    assert(searchDateBounds({ period: 'custom', from: null, to: '2026-08-15' }, referenceDate).lower === null, 'Custom to-only fabrique une borne basse.');
+    assert(searchDateBounds({ period: 'custom', from: '2026-08-10', to: null }, referenceDate).upperExclusive === null, 'Custom from-only fabrique une borne haute.');
+    let reversedRangeError = null;
+    try { searchDateBounds({ period: 'custom', from: '2026-08-16', to: '2026-08-15' }, referenceDate); } catch (error) { reversedRangeError = error; }
+    assert(reversedRangeError?.message === 'La date de début doit précéder la date de fin.', 'Une plage inversee doit etre refusee explicitement.');
 
     const boundary = createdPeriodStartIso('last7days', referenceDate);
     const raw = new Database(dbPath);
@@ -228,12 +304,62 @@ app.whenReady().then(async () => {
     raw.prepare('UPDATE documents SET created_at = ? WHERE id = ?').run(new Date(new Date(boundary).getTime() - 1).toISOString(), before.id);
     raw.prepare('UPDATE documents SET created_at = ? WHERE id = ?').run(boundary, exact.id);
     raw.close();
-    const recent = ids(db.searchDocuments(options('', { createdPeriod: 'last7days' }), referenceDate));
+    const recent = ids(db.searchDocuments(options('', { created: { period: 'last7days', from: null, to: null } }), referenceDate));
     assert(!recent.has(before.id) && recent.has(exact.id), 'La limite temporelle inclusive est incorrecte.');
-    const textAndDate = ids(db.searchDocuments(options('instrumentation', { createdPeriod: 'last7days' }), referenceDate));
+    const textAndDate = ids(db.searchDocuments(options('instrumentation', { created: { period: 'last7days', from: null, to: null } }), referenceDate));
     assert(textAndDate.has(1), 'Texte et date devraient trouver le document recent.');
-    const oldTextAndDate = ids(db.searchDocuments(options('charlie', { createdPeriod: 'last7days' }), referenceDate));
+    const oldTextAndDate = ids(db.searchDocuments(options('charlie', { created: { period: 'last7days', from: null, to: null } }), referenceDate));
     assert(!oldTextAndDate.has(zoneDocument.id), 'Texte ancien non exclu par la periode.');
+
+    const customBefore = db.updateDocument(db.createDocument().id, {
+      title: 'bornecreation avant', content: '', notes: '', status: 'active', favorite: false, folder_id: null,
+    });
+    const customStart = db.updateDocument(db.createDocument().id, {
+      title: 'bornecreation debut', content: '', notes: '', status: 'active', favorite: false, folder_id: null,
+    });
+    const customInside = db.updateDocument(db.createDocument().id, {
+      title: 'bornecreation milieu', content: '', notes: '', status: 'active', favorite: false, folder_id: null,
+    });
+    const customAfter = db.updateDocument(db.createDocument().id, {
+      title: 'bornecreation apres', content: '', notes: '', status: 'active', favorite: false, folder_id: null,
+    });
+    const rawCustom = new Database(dbPath);
+    const setDates = rawCustom.prepare('UPDATE documents SET created_at = ?, updated_at = ? WHERE id = ?');
+    setDates.run(new Date(2026, 7, 9, 23, 59, 59, 999).toISOString(), new Date(2026, 7, 9, 23, 59, 59, 999).toISOString(), customBefore.id);
+    setDates.run(new Date(2026, 7, 10, 0, 0, 0, 0).toISOString(), new Date(2026, 7, 10, 0, 0, 0, 0).toISOString(), customStart.id);
+    setDates.run(new Date(2026, 7, 15, 18, 0, 0, 0).toISOString(), new Date(2026, 7, 15, 18, 0, 0, 0).toISOString(), customInside.id);
+    setDates.run(new Date(2026, 7, 16, 0, 0, 0, 0).toISOString(), new Date(2026, 7, 16, 0, 0, 0, 0).toISOString(), customAfter.id);
+    rawCustom.close();
+    const customFilter = { period: 'custom', from: '2026-08-10', to: '2026-08-15' };
+    const createdCustom = ids(db.searchDocuments(options('bornecreation', { fields: ['title'], created: customFilter }), referenceDate));
+    assert(!createdCustom.has(customBefore.id) && createdCustom.has(customStart.id) && createdCustom.has(customInside.id) && !createdCustom.has(customAfter.id), 'La plage custom de creation ne respecte pas >= lower et < upperExclusive.');
+    const modifiedCustom = ids(db.searchDocuments(options('bornecreation', { fields: ['title'], modified: customFilter }), referenceDate));
+    assert(!modifiedCustom.has(customBefore.id) && modifiedCustom.has(customStart.id) && modifiedCustom.has(customInside.id) && !modifiedCustom.has(customAfter.id), 'La plage custom de modification est incorrecte.');
+    const fromOnly = ids(db.searchDocuments(options('bornecreation', { fields: ['title'], created: { period: 'custom', from: '2026-08-15', to: null } }), referenceDate));
+    assert(fromOnly.has(customInside.id) && fromOnly.has(customAfter.id) && !fromOnly.has(customStart.id), 'La plage de creation from-only est incorrecte.');
+    const toOnly = ids(db.searchDocuments(options('bornecreation', { fields: ['title'], modified: { period: 'custom', from: null, to: '2026-08-10' } }), referenceDate));
+    assert(toOnly.has(customBefore.id) && toOnly.has(customStart.id) && !toOnly.has(customInside.id), 'La plage de modification to-only est incorrecte.');
+    const combinedDates = ids(db.searchDocuments(options('bornecreation', {
+      fields: ['title'],
+      created: { period: 'thisYear', from: null, to: null },
+      modified: { period: 'last7days', from: null, to: null },
+    }), referenceDate));
+    assert(combinedDates.has(customStart.id) && combinedDates.has(customInside.id) && combinedDates.has(customAfter.id) && !combinedDates.has(customBefore.id), 'Les filtres creation et modification ne se combinent pas avec AND.');
+
+    const textAndStructured = ids(db.searchDocuments(options('instrument', {
+      fields: ['title', 'content'],
+      folderSelection: { folderIds: [1, folderA.id], includeUnclassified: false },
+      statuses: ['draft', 'active'],
+      favoriteOnly: true,
+    }), referenceDate));
+    assert(textAndStructured.has(1), 'Texte et criteres structures devraient trouver le document migre.');
+    const textWrongFolder = ids(db.searchDocuments(options('instrument', {
+      fields: ['title', 'content'],
+      folderSelection: { folderIds: [folderB.id], includeUnclassified: false },
+      statuses: ['draft', 'active'],
+      favoriteOnly: true,
+    }), referenceDate));
+    assert(!textWrongFolder.has(1), 'Un document correspondant au texte mais pas au dossier est conserve.');
 
     db.trashDocument(updated.id);
     assert(!ids(db.searchDocuments(options('motnouveau'))).has(updated.id), 'La corbeille logique fuit dans la recherche.');

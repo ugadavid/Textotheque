@@ -118,7 +118,9 @@ app
       withDatabase(createTextothequeDatabase(backupPath), (searchableBackup) => {
         const results = searchableBackup.searchDocuments({
           query: 'snapshot', fields: ['title', 'content', 'notes'], matchMode: 'all',
-          createdPeriod: 'all', sortBy: 'relevance', direction: 'asc',
+          folderSelection: { folderIds: [], includeUnclassified: false }, statuses: [], favoriteOnly: false,
+          created: { period: 'all', from: null, to: null }, modified: { period: 'all', from: null, to: null },
+          sortBy: 'relevance', direction: 'asc',
         });
         assert(results.some((item) => item.id === savedDocument.id), 'Le backup ne conserve pas la recherche FTS.');
         searchableBackup.verifyFullTextIndex();
@@ -357,7 +359,10 @@ app
       assert(oldSchemaManager.getDatabase().listDocuments()[0].content === 'Contenu a migrer avec accord.', 'La migration v0 a perdu le contenu.');
       assert(
         oldSchemaManager.getDatabase().searchDocuments({
-          query: 'migrer', fields: ['content'], matchMode: 'all', createdPeriod: 'all', sortBy: 'relevance', direction: 'asc',
+          query: 'migrer', fields: ['content'], matchMode: 'all',
+          folderSelection: { folderIds: [], includeUnclassified: false }, statuses: [], favoriteOnly: false,
+          created: { period: 'all', from: null, to: null }, modified: { period: 'all', from: null, to: null },
+          sortBy: 'relevance', direction: 'asc',
         }).length === 1,
         'La migration externe approuvee n a pas construit FTS.'
       );

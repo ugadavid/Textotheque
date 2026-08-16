@@ -176,7 +176,10 @@ app
         const catalogDocuments = await api.listDocumentCatalog({ sortBy: 'updated_at', direction: 'desc' });
         const searchDocuments = await api.searchDocuments({
           query: 'résultat', fields: ['title', 'content', 'notes'], matchMode: 'all',
-          createdPeriod: 'all', sortBy: 'relevance', direction: 'asc'
+          folderSelection: { folderIds: [], includeUnclassified: false }, statuses: [], favoriteOnly: false,
+          created: { period: 'all', from: null, to: null },
+          modified: { period: 'all', from: null, to: null },
+          sortBy: 'relevance', direction: 'asc'
         });
         const libraryInfo = await api.getLibraryInfo();
         const startupNotice = await api.getLibraryStartupNotice();
