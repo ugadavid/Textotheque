@@ -10,6 +10,7 @@ interface EditorPaneProps {
   error: string | null;
   notice: string | null;
   isDeleted: boolean;
+  isTodo: boolean;
   searchQuery: string;
   navigationVisible: boolean;
   metadataVisible: boolean;
@@ -19,6 +20,7 @@ interface EditorPaneProps {
   onClearSearch: () => void;
   onToggleNavigation: () => void;
   onToggleMetadata: () => void;
+  onOpenTodo: () => void;
   onSave: () => void;
   onTrash: () => void;
   onRestore: () => void;
@@ -41,6 +43,7 @@ export default function EditorPane({
   error,
   notice,
   isDeleted,
+  isTodo,
   searchQuery,
   navigationVisible,
   metadataVisible,
@@ -50,6 +53,7 @@ export default function EditorPane({
   onClearSearch,
   onToggleNavigation,
   onToggleMetadata,
+  onOpenTodo,
   onSave,
   onTrash,
   onRestore,
@@ -100,6 +104,16 @@ export default function EditorPane({
         >
           <span className="navigation-toggle-icon" aria-hidden="true" />
         </button>
+        <button
+          className={isTodo ? 'todo-toolbar-button active' : 'todo-toolbar-button'}
+          type="button"
+          onClick={onOpenTodo}
+          title="Ouvrir le TODO — Ctrl+Shift+T"
+          aria-label="Ouvrir le TODO"
+          aria-pressed={isTodo}
+        >
+          TODO
+        </button>
         <div className="title-row">
           {document ? <>
             {isDirty ? <span className="title-dirty-marker" aria-label="Modifications non sauvegardees">*</span> : null}
@@ -135,9 +149,9 @@ export default function EditorPane({
               </button>
             ) : (
               <>
-                <button className="secondary-button trash-button" type="button" onClick={onTrash}>
+                {!isTodo ? <button className="secondary-button trash-button" type="button" onClick={onTrash}>
                   Corbeille
-                </button>
+                </button> : null}
                 <button
                   className="primary-button"
                   type="button"

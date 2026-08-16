@@ -4,7 +4,7 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 
 const libraryA = 'C:\\temporary\\autosave-a.sqlite';
 const libraryB = 'C:\\temporary\\autosave-b.sqlite';
-let libraryInfo = { path: libraryA, fileName: 'autosave-a.sqlite', applicationId: 1413830735, userVersion: 2, isTextotheque: true };
+let libraryInfo = { path: libraryA, fileName: 'autosave-a.sqlite', applicationId: 1413830735, userVersion: 3, isTextotheque: true };
 let documents = [
   { id: 1, title: 'Premier document', content: 'Initial A', content_format: 'plain', status: 'active', favorite: 0, created_at: '2026-08-15T00:00:00.000Z', updated_at: '2026-08-15T00:00:00.000Z', last_opened_at: null, deleted_at: null, notes: '', folder_id: null },
   { id: 2, title: 'Deuxieme document', content: 'Initial deux', content_format: 'plain', status: 'active', favorite: 0, created_at: '2026-08-15T00:00:00.000Z', updated_at: '2026-08-15T00:00:00.000Z', last_opened_at: null, deleted_at: null, notes: '', folder_id: null },
@@ -42,7 +42,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('library:create', () => ({ status: 'create-failed', library: null }));
   ipcMain.handle('library:inspect', (_event, candidatePath) => ({
     status: 'compatible',
-    inspection: { path: candidatePath, fileName: path.basename(candidatePath), readable: true, applicationId: 1413830735, userVersion: 2, isTextotheque: true, compatibility: 'compatible' },
+    inspection: { path: candidatePath, fileName: path.basename(candidatePath), readable: true, applicationId: 1413830735, userVersion: 3, isTextotheque: true, compatibility: 'compatible' },
     library: null,
     backupPath: null,
   }));

@@ -1,4 +1,4 @@
-import type { DocumentInput, Folder, LibraryBackupResult, LibraryInfo, TextDocument } from './database.js';
+import type { DocumentInput, Folder, LibraryBackupResult, LibraryInfo, SpecialDocumentRole, TextDocument } from './database.js';
 import type { LibraryCreateResult, LibraryCreateSelection, LibraryMenuAction, LibraryOpenResult } from './library-manager.js';
 import type { TextExportDraft, TextExportResult } from './text-export.js';
 
@@ -34,6 +34,8 @@ const api = {
   renameFolder: (id: number, name: string): Promise<Folder> => ipcRenderer.invoke('folders:rename', id, name),
   createDocument: (folderId: number | null = null): Promise<TextDocument> =>
     ipcRenderer.invoke('documents:create', folderId),
+  getOrCreateSpecialDocument: (role: SpecialDocumentRole): Promise<TextDocument> =>
+    ipcRenderer.invoke('documents:get-or-create-special', role),
   getDocument: (id: number): Promise<TextDocument | null> => ipcRenderer.invoke('documents:get', id),
   updateDocument: (id: number, input: DocumentInput, expectedLibraryPath?: string): Promise<TextDocument> =>
     ipcRenderer.invoke('documents:update', id, input, expectedLibraryPath),

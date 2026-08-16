@@ -93,7 +93,11 @@ export default function NavigationPane(props: NavigationPaneProps) {
   const hasSearch = searchQuery.trim().length > 0;
   const isNavigationMode = !hasSearch && ['navigation', 'folder', 'unfiled'].includes(currentView);
   const folderRows = useMemo(() => buildFolderRows(folders, expandedFolderIds), [folders, expandedFolderIds]);
-  const unfiledDocuments = allDocuments.filter((document) => document.folder_id === null);
+  const treeDocuments = useMemo(
+    () => allDocuments.filter((document) => document.special_role !== 'todo'),
+    [allDocuments]
+  );
+  const unfiledDocuments = treeDocuments.filter((document) => document.folder_id === null);
 
   useEffect(() => {
     window.localStorage.setItem(EXPANDED_FOLDERS_KEY, JSON.stringify([...expandedFolderIds]));
@@ -101,7 +105,7 @@ export default function NavigationPane(props: NavigationPaneProps) {
 
   useEffect(() => {
     if (!isNavigationMode) return;
-    const selectedDocument = allDocuments.find((document) => document.id === selectedDocumentId);
+    const selectedDocument = treeDocuments.find((document) => document.id === selectedDocumentId);
     const folderId = selectedDocument?.folder_id ?? selectedFolderId;
     if (folderId === null || folderId === undefined) {
       if (selectedDocument || currentView === 'unfiled') setIsUnfiledExpanded(true);
@@ -114,7 +118,7 @@ export default function NavigationPane(props: NavigationPaneProps) {
       idsToOpen.forEach((id) => next.add(id));
       return next;
     });
-  }, [allDocuments, currentView, folders, isNavigationMode, selectedDocumentId, selectedFolderId]);
+  }, [currentView, folders, isNavigationMode, selectedDocumentId, selectedFolderId, treeDocuments]);
 
   function toggleFolder(folderId: number) {
     setExpandedFolderIds((current) => {
@@ -170,7 +174,7 @@ export default function NavigationPane(props: NavigationPaneProps) {
     </div> : null}
 
     <div className="navigation-scroll-region">
-      {hasSearch ? simpleList(searchResults, 'Résultats', 'Aucun document trouvé.') : null}
+      {hasSearch ? simpleList(searchResults, 'Résultats', 'Aucun document trouvé.', 'all') : null}
       {!hasSearch && currentView === 'all' ? simpleList(allDocuments, 'Tous les textes', 'Aucun document pour le moment.', 'all') : null}
       {!hasSearch && currentView === 'trash' ? <section className="navigation-mode" aria-label="Corbeille">
         <div className="navigation-mode-header"><span>Corbeille</span><strong>{trashCount}</strong></div>
@@ -190,7 +194,7 @@ export default function NavigationPane(props: NavigationPaneProps) {
             {folderRows.map((folder) => {
               const isSelected = currentView === 'folder' && selectedFolderId === folder.id;
               const isExpanded = expandedFolderIds.has(folder.id);
-              const folderDocuments = isExpanded ? allDocuments.filter((document) => document.folder_id === folder.id) : [];
+              const folderDocuments = isExpanded ? treeDocuments.filter((document) => document.folder_id === folder.id) : [];
               const startRename = () => { setEditingFolderId(folder.id); setEditingFolderName(folder.name); };
               const commitRename = (name = editingFolderName) => { onRenameFolder(folder.id, name); setEditingFolderId(null); setEditingFolderName(''); };
               return <div className="folder-row" key={folder.id}>

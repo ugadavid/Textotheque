@@ -137,7 +137,7 @@ PRAGMA user_version
 État courant :
 
 ```text
-schema version = 2
+schema version = 3
 ```
 
 Le numéro de schéma évolue uniquement lorsque la structure ou le contrat persistant exige une migration.

@@ -4,6 +4,7 @@ import path from 'node:path';
 
 export type ContentFormat = 'plain' | 'markdown' | 'rich';
 export type DocumentStatus = 'draft' | 'active' | 'to_review' | 'final' | 'archived';
+export type SpecialDocumentRole = 'todo';
 
 export interface TextDocument {
   id: number;
@@ -13,6 +14,7 @@ export interface TextDocument {
   status: DocumentStatus;
   favorite: number;
   folder_id: number | null;
+  special_role: SpecialDocumentRole | null;
   created_at: string;
   updated_at: string;
   last_opened_at: string | null;
@@ -38,7 +40,7 @@ export interface DocumentInput {
   folder_id: number | null;
 }
 
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 3;
 export const TEXTOTHEQUE_APPLICATION_ID = 0x5445584f;
 export const MAX_AUTOMATIC_DOCUMENTS_PER_DAY = 99;
 
@@ -96,6 +98,7 @@ CREATE TABLE IF NOT EXISTS documents (
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'to_review', 'final', 'archived')),
   favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1)),
   folder_id INTEGER,
+  special_role TEXT CHECK (special_role IS NULL OR special_role IN ('todo')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   last_opened_at TEXT,
@@ -112,6 +115,10 @@ CREATE TABLE IF NOT EXISTS folders (
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (parent_id) REFERENCES folders(id) ON DELETE SET NULL
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_special_role_unique
+ON documents(special_role)
+WHERE special_role IS NOT NULL;
 `;
 
 interface SchemaMigration {
@@ -129,6 +136,10 @@ function tableExists(db: Database.Database, tableName: string): boolean {
 function columnExists(db: Database.Database, tableName: string, columnName: string): boolean {
   const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
   return columns.some((column) => column.name === columnName);
+}
+
+function indexExists(db: Database.Database, indexName: string): boolean {
+  return Boolean(db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?`).get(indexName));
 }
 
 const legacyDocumentColumns = [
@@ -173,6 +184,16 @@ function inferKnownTextothequeSchemaVersion(db: Database.Database): number | nul
   const documentColumnsV0 = legacyDocumentColumns;
   const documentColumnsV1 = [...legacyDocumentColumns, 'deleted_at'];
   const documentColumnsV2 = [...legacyDocumentColumns, 'deleted_at', 'folder_id'];
+  const documentColumnsV3 = [...documentColumnsV2, 'special_role'];
+
+  if (
+    hasOnlyHistoricalTables(db, ['documents', 'folders']) &&
+    hasExactColumns(db, 'documents', documentColumnsV3) &&
+    hasExactColumns(db, 'folders', currentFolderColumns) &&
+    indexExists(db, 'idx_documents_special_role_unique')
+  ) {
+    return 3;
+  }
 
   if (
     hasOnlyHistoricalTables(db, ['documents', 'folders']) &&
@@ -399,6 +420,24 @@ const schemaMigrations: SchemaMigration[] = [
       }
     },
   },
+  {
+    version: 3,
+    name: 'add documents.special_role and unique role index',
+    migrate: (db) => {
+      if (!columnExists(db, 'documents', 'special_role')) {
+        db.exec(
+          `ALTER TABLE documents
+           ADD COLUMN special_role TEXT
+           CHECK (special_role IS NULL OR special_role IN ('todo'))`
+        );
+      }
+      db.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_special_role_unique
+         ON documents(special_role)
+         WHERE special_role IS NOT NULL`
+      );
+    },
+  },
 ];
 
 export class TextothequeDatabase {
@@ -492,8 +531,12 @@ export class TextothequeDatabase {
   private inferUnversionedSchemaVersion(): number {
     const hasDeletedAt = columnExists(this.db, 'documents', 'deleted_at');
     const hasFolderId = columnExists(this.db, 'documents', 'folder_id');
+    const hasSpecialRole = columnExists(this.db, 'documents', 'special_role');
     const hasFolders = tableExists(this.db, 'folders');
 
+    if (hasDeletedAt && hasFolderId && hasSpecialRole && hasFolders) {
+      return 3;
+    }
     if (hasDeletedAt && hasFolderId && hasFolders) {
       return 2;
     }
@@ -537,6 +580,9 @@ export class TextothequeDatabase {
     if (version >= 2 && !tableExists(this.db, 'folders')) {
       missingStructures.push('folders');
     }
+    if (version >= 3 && !columnExists(this.db, 'documents', 'special_role')) {
+      missingStructures.push('documents.special_role');
+    }
 
     if (missingStructures.length > 0) {
       throw new Error(
@@ -556,6 +602,9 @@ export class TextothequeDatabase {
     if (!tableExists(this.db, 'folders')) {
       missingStructures.push('folders');
     }
+    if (!columnExists(this.db, 'documents', 'special_role')) {
+      missingStructures.push('documents.special_role');
+    }
 
     if (missingStructures.length > 0) {
       throw new Error(`Schema SQLite incomplet: ${missingStructures.join(', ')}.`);
@@ -567,6 +616,11 @@ export class TextothequeDatabase {
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_documents_last_opened_at ON documents(last_opened_at DESC)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_documents_deleted_at ON documents(deleted_at DESC)`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_documents_folder_id ON documents(folder_id)`);
+    this.db.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_special_role_unique
+       ON documents(special_role)
+       WHERE special_role IS NOT NULL`
+    );
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_folders_parent_id ON folders(parent_id)`);
   }
 
@@ -590,6 +644,7 @@ export class TextothequeDatabase {
          WHERE content_format = 'plain'
            AND status = 'draft'
            AND favorite = 0
+           AND special_role IS NULL
            AND deleted_at IS NULL
            AND trim(content) = ''
            AND trim(notes) = ''`
@@ -617,7 +672,7 @@ export class TextothequeDatabase {
   listDocuments(): TextDocument[] {
     return this.db
       .prepare(
-        `SELECT id, title, content, content_format, status, favorite, folder_id, created_at, updated_at, last_opened_at, deleted_at, notes
+        `SELECT id, title, content, content_format, status, favorite, folder_id, special_role, created_at, updated_at, last_opened_at, deleted_at, notes
          FROM documents
          WHERE deleted_at IS NULL
          ORDER BY updated_at DESC, id DESC`
@@ -628,7 +683,7 @@ export class TextothequeDatabase {
   listDeletedDocuments(): TextDocument[] {
     return this.db
       .prepare(
-        `SELECT id, title, content, content_format, status, favorite, folder_id, created_at, updated_at, last_opened_at, deleted_at, notes
+        `SELECT id, title, content, content_format, status, favorite, folder_id, special_role, created_at, updated_at, last_opened_at, deleted_at, notes
          FROM documents
          WHERE deleted_at IS NOT NULL
          ORDER BY deleted_at DESC, updated_at DESC, id DESC`
@@ -639,7 +694,7 @@ export class TextothequeDatabase {
   getDocument(id: number): TextDocument | null {
     const document = this.db
       .prepare(
-        `SELECT id, title, content, content_format, status, favorite, folder_id, created_at, updated_at, last_opened_at, deleted_at, notes
+        `SELECT id, title, content, content_format, status, favorite, folder_id, special_role, created_at, updated_at, last_opened_at, deleted_at, notes
          FROM documents
          WHERE id = ?`
       )
@@ -690,6 +745,42 @@ export class TextothequeDatabase {
     });
 
     return create();
+  }
+
+  getOrCreateSpecialDocument(role: SpecialDocumentRole): TextDocument {
+    if (role !== 'todo') {
+      throw new Error(`Role de document special inconnu: ${String(role)}.`);
+    }
+
+    const getOrCreate = this.db.transaction(() => {
+      const existing = this.db
+        .prepare(`SELECT id FROM documents WHERE special_role = ?`)
+        .get(role) as { id: number } | undefined;
+      if (existing) {
+        this.db.prepare(`UPDATE documents SET last_opened_at = @now WHERE id = @id`).run({
+          id: existing.id,
+          now: nowIso(),
+        });
+        const document = this.getDocument(existing.id);
+        if (!document) throw new Error('Le document special est introuvable.');
+        return document;
+      }
+
+      const now = nowIso();
+      const result = this.db
+        .prepare(
+          `INSERT INTO documents
+             (title, content, content_format, status, favorite, folder_id, special_role, created_at, updated_at, last_opened_at, notes)
+           VALUES
+             ('TODO', '', 'plain', 'active', 0, NULL, @role, @now, @now, @now, '')`
+        )
+        .run({ role, now });
+      const document = this.getDocument(Number(result.lastInsertRowid));
+      if (!document) throw new Error('Le document TODO cree est introuvable.');
+      return document;
+    });
+
+    return getOrCreate();
   }
 
   updateDocument(id: number, input: DocumentInput): TextDocument {
@@ -796,6 +887,14 @@ export class TextothequeDatabase {
   }
 
   trashDocument(id: number): TextDocument {
+    const current = this.getDocument(id);
+    if (!current) {
+      throw new Error('Le document a mettre a la corbeille est introuvable.');
+    }
+    if (current.special_role !== null) {
+      throw new Error('Un document permanent ne peut pas etre place dans la corbeille.');
+    }
+
     const now = nowIso();
     this.db
       .prepare(`UPDATE documents SET deleted_at = @now, updated_at = @now WHERE id = @id AND deleted_at IS NULL`)

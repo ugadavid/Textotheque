@@ -1,5 +1,6 @@
 export type ContentFormat = 'plain' | 'markdown' | 'rich';
 export type DocumentStatus = 'draft' | 'active' | 'to_review' | 'final' | 'archived';
+export type SpecialDocumentRole = 'todo';
 
 export interface TextDocument {
   id: number;
@@ -9,6 +10,7 @@ export interface TextDocument {
   status: DocumentStatus;
   favorite: number;
   folder_id: number | null;
+  special_role: SpecialDocumentRole | null;
   created_at: string;
   updated_at: string;
   last_opened_at: string | null;

@@ -15,6 +15,7 @@ import {
   createFolder,
   createDocument,
   emptyTrash,
+  getOrCreateSpecialDocument,
   listDeletedDocuments,
   listFolders,
   listDocuments,
@@ -192,31 +193,37 @@ export default function App() {
     () => folders.find((folder) => folder.id === selectedFolderId) ?? null,
     [folders, selectedFolderId]
   );
+  const navigationDocuments = useMemo(
+    () => documents.filter((document) => document.special_role !== 'todo'),
+    [documents]
+  );
   const currentDocuments = useMemo(() => {
     if (documentView === 'trash') {
       return deletedDocuments;
     }
     if (documentView === 'unfiled') {
-      return documents.filter((document) => document.folder_id === null);
+      return navigationDocuments.filter((document) => document.folder_id === null);
     }
     if (documentView === 'folder') {
-      return selectedFolderId === null ? [] : documents.filter((document) => document.folder_id === selectedFolderId);
+      return selectedFolderId === null
+        ? []
+        : navigationDocuments.filter((document) => document.folder_id === selectedFolderId);
     }
-    return documents;
-  }, [deletedDocuments, documentView, documents, selectedFolderId]);
+    return documentView === 'all' ? documents : navigationDocuments;
+  }, [deletedDocuments, documentView, documents, navigationDocuments, selectedFolderId]);
   const unfiledCount = useMemo(
-    () => documents.filter((document) => document.folder_id === null).length,
-    [documents]
+    () => navigationDocuments.filter((document) => document.folder_id === null).length,
+    [navigationDocuments]
   );
   const folderDocumentCounts = useMemo(
     () =>
-      documents.reduce<Record<number, number>>((counts, document) => {
+      navigationDocuments.reduce<Record<number, number>>((counts, document) => {
         if (document.folder_id !== null) {
           counts[document.folder_id] = (counts[document.folder_id] ?? 0) + 1;
         }
         return counts;
       }, {}),
-    [documents]
+    [navigationDocuments]
   );
   const viewContextLabel = useMemo(() => {
     if (documentView === 'trash') {
@@ -243,6 +250,7 @@ export default function App() {
     });
   }, [documents, searchQuery]);
   const selectedDocumentIsDeleted = Boolean(selectedDocument?.deleted_at);
+  const selectedDocumentIsTodo = selectedDocument?.special_role === 'todo';
   const isDirty = Boolean(
     selectedDocument &&
       (title !== titleForEditing(selectedDocument.title) ||
@@ -413,12 +421,18 @@ export default function App() {
       return trashDocuments;
     }
     if (view === 'unfiled') {
-      return activeDocuments.filter((document) => document.folder_id === null);
+      return activeDocuments.filter((document) => document.special_role !== 'todo' && document.folder_id === null);
     }
     if (view === 'folder') {
-      return targetFolderId === null ? [] : activeDocuments.filter((document) => document.folder_id === targetFolderId);
+      return targetFolderId === null
+        ? []
+        : activeDocuments.filter(
+            (document) => document.special_role !== 'todo' && document.folder_id === targetFolderId
+          );
     }
-    return activeDocuments;
+    return view === 'all'
+      ? activeDocuments
+      : activeDocuments.filter((document) => document.special_role !== 'todo');
   }
 
   function clearAutosaveTimer(): void {
@@ -536,6 +550,41 @@ export default function App() {
       return;
     }
     focusEditor();
+  }
+
+  async function handleOpenTodo() {
+    if (selectedDocumentIsTodo) {
+      return;
+    }
+    if (!(await confirmDiscardUnsavedChanges())) {
+      return;
+    }
+
+    setError(null);
+    let todo: TextDocument;
+    try {
+      todo = await getOrCreateSpecialDocument('todo');
+    } catch (todoError: unknown) {
+      showOperationError('open-special-todo', todoError, 'Impossible d’ouvrir le TODO.');
+      return;
+    }
+
+    try {
+      const [nextDocuments, nextDeletedDocuments, nextFolders] = await Promise.all([
+        listDocuments(),
+        listDeletedDocuments(),
+        listFolders(),
+      ]);
+      setDocuments(nextDocuments);
+      setDeletedDocuments(nextDeletedDocuments);
+      setFolders(nextFolders);
+      applyDocument(nextDocuments.find((document) => document.id === todo.id) ?? todo);
+      setDocumentView('all');
+      setSelectedFolderId(null);
+      focusEditor();
+    } catch (loadError: unknown) {
+      showOperationError('refresh-after-open-special-todo', loadError, 'TODO ouvert, mais actualisation impossible.');
+    }
   }
 
   async function handleCreateFolder(parentId: number | null = null) {
@@ -929,6 +978,10 @@ export default function App() {
     if (!selectedDocument || selectedDocumentIsDeleted) {
       return;
     }
+    if (selectedDocumentIsTodo) {
+      setError('Le TODO est un document permanent et ne peut pas être placé dans la corbeille.');
+      return;
+    }
 
     if (isDirty) {
       setError('Sauvegardez ou annulez les modifications avant de deplacer ce document vers la corbeille.');
@@ -1054,6 +1107,12 @@ export default function App() {
     function handleKeyDown(event: KeyboardEvent) {
       const key = event.key.toLowerCase();
       const usesCtrl = event.ctrlKey || event.metaKey;
+
+      if (usesCtrl && event.shiftKey && key === 't') {
+        event.preventDefault();
+        void handleOpenTodo();
+        return;
+      }
 
       if (usesCtrl && key === 's') {
         event.preventDefault();
@@ -1193,6 +1252,7 @@ export default function App() {
           error={error}
           notice={libraryNotice}
           isDeleted={selectedDocumentIsDeleted}
+          isTodo={selectedDocumentIsTodo}
           searchQuery={searchQuery}
           onTitleChange={(value) => {
             setTitle(value);
@@ -1206,6 +1266,7 @@ export default function App() {
           metadataVisible={paneLayout.rightVisible}
           onToggleNavigation={toggleNavigationPane}
           onToggleMetadata={toggleMetadataPane}
+          onOpenTodo={handleOpenTodo}
           onSearchChange={handleSearchChange}
           onClearSearch={clearSearchAndReturnToNavigation}
           onSave={handleSave}

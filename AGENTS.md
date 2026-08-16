@@ -209,7 +209,7 @@ PRAGMA user_version
 Le schéma courant est actuellement :
 
 ```text
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 ```
 
 La version de schéma est indépendante de la version applicative.
@@ -617,6 +617,34 @@ Ne pas mélanger :
 
 Le nettoyage des brouillons strictement vides se fait au démarrage après migrations et passe par la corbeille logique.
 
+Il exclut toujours les documents spéciaux :
+
+```text
+documents.special_role IS NOT NULL
+→ jamais nettoyé comme brouillon vide
+```
+
+### TODO permanent par bibliothèque
+
+Le TODO est un document ordinaire de la table `documents`, identifié par :
+
+```text
+special_role = 'todo'
+```
+
+Le domaine persistant actuel est fermé à `NULL | 'todo'`. Un index unique partiel garantit au plus un document spécial par rôle et par bibliothèque.
+
+Règles à préserver :
+
+- création paresseuse et atomique au premier accès ;
+- titre initial `TODO`, ensuite modifiable librement ;
+- `content_format = 'plain'` et autosave documentaire commun ;
+- absence de l’arborescence normale uniquement ;
+- présence dans la recherche, « Tous les textes », les compteurs généraux et les backups ;
+- refus de la mise à la corbeille dans le renderer et dans la couche DB ;
+- aucune identification du rôle par le titre ;
+- aucune donnée TODO externe, aucun éditeur ou format parallèle.
+
 ---
 
 ## 17. Cohérence légère des dossiers
@@ -813,6 +841,10 @@ npm.cmd run test:ui-safeguards
 npm.cmd run test:ipc-error
 npm.cmd run test:library
 npm.cmd run test:library-history
+npm.cmd run test:autosave
+npm.cmd run test:text-export
+npm.cmd run test:auto-title
+npm.cmd run test:special-todo
 ```
 
 ### Rôle des principaux tests
@@ -880,6 +912,13 @@ npm.cmd run test:library-history
 - entrées introuvables ;
 - déduplication ;
 - absence de purge.
+
+`test:special-todo`
+
+- migration de schéma 2 vers 3 ;
+- création paresseuse et unicité du TODO ;
+- permanence, nettoyage des brouillons et indépendance des bibliothèques ;
+- conservation par backup.
 
 ---
 
@@ -1064,6 +1103,7 @@ Fonctionnalités présentes notamment :
 - création d’une bibliothèque ;
 - registre durable des bibliothèques connues ;
 - réouverture de la dernière bibliothèque compatible.
+- TODO permanent propre à chaque bibliothèque.
 
 Fonctionnalités volontairement absentes ou reportées :
 
@@ -1095,6 +1135,7 @@ Conserver sauf demande contraire :
 Ctrl+S → sauvegarde document
 Ctrl+N → nouveau document dans le contexte courant
 Ctrl+F → recherche globale
+Ctrl+Shift+T → ouvrir le TODO de la bibliothèque active
 Escape → annulation / sortie recherche selon contexte
 F2 → focus titre
 ```
@@ -1102,6 +1143,7 @@ F2 → focus titre
 Autres invariants :
 
 - document en corbeille en lecture seule ;
+- TODO permanent jamais placé dans la corbeille ;
 - changement de document protégé si dirty ;
 - changement de bibliothèque protégé si dirty ;
 - backup bibliothèque refusé si document dirty ;

@@ -586,8 +586,26 @@ h2 {
 
 .editor-toolbar {
   display: grid;
-  grid-template-columns: auto minmax(130px, 1fr) minmax(190px, 1.45fr) auto auto;
+  grid-template-columns: auto auto minmax(130px, 1fr) minmax(190px, 1.45fr) auto auto;
   flex: 0 0 auto;
+}
+
+.todo-toolbar-button {
+  min-height: 32px;
+  border: 1px solid #d7d0c4;
+  border-radius: 6px;
+  background: #fffdf9;
+  color: #51473f;
+  cursor: pointer;
+  padding: 0 9px;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.todo-toolbar-button.active {
+  border-color: #2f675c;
+  background: #eef7f1;
+  color: #204d45;
 }
 
 .pane-toggle-button {
@@ -955,7 +973,7 @@ textarea:disabled {
 
 @media (max-width: 1100px) {
   .editor-toolbar {
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-columns: auto auto minmax(0, 1fr) auto auto;
   }
 
   .toolbar-search {
@@ -964,7 +982,7 @@ textarea:disabled {
   }
 
   .save-controls {
-    grid-column: 3;
+    grid-column: 4;
     grid-row: 1;
   }
 
@@ -974,12 +992,12 @@ textarea:disabled {
   }
 
   .title-row {
-    grid-column: 2;
+    grid-column: 3;
     grid-row: 1;
   }
 
   .toggle-metadata-button {
-    grid-column: 4;
+    grid-column: 5;
     grid-row: 1;
   }
 }

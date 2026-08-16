@@ -1,4 +1,4 @@
-import type { DocumentInput, Folder, TextDocument } from '../types/document';
+import type { DocumentInput, Folder, SpecialDocumentRole, TextDocument } from '../types/document';
 
 export async function listDocuments(): Promise<TextDocument[]> {
   return window.textotheque.listDocuments();
@@ -22,6 +22,10 @@ export async function renameFolder(id: number, name: string): Promise<Folder> {
 
 export async function createDocument(folderId: number | null = null): Promise<TextDocument> {
   return window.textotheque.createDocument(folderId);
+}
+
+export async function getOrCreateSpecialDocument(role: SpecialDocumentRole): Promise<TextDocument> {
+  return window.textotheque.getOrCreateSpecialDocument(role);
 }
 
 export async function selectDocument(id: number): Promise<TextDocument | null> {

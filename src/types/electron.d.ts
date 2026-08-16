@@ -1,4 +1,4 @@
-import type { DocumentInput, Folder, TextDocument } from './document';
+import type { DocumentInput, Folder, SpecialDocumentRole, TextDocument } from './document';
 import type { LibraryBackupResult, LibraryCreateResult, LibraryCreateSelection, LibraryInfo, LibraryMenuAction, LibraryOpenResult } from './library';
 import type { TextExportDraft, TextExportResult } from './text-export';
 
@@ -23,6 +23,7 @@ declare global {
       createFolder: (parentId: number | null) => Promise<Folder>;
       renameFolder: (id: number, name: string) => Promise<Folder>;
       createDocument: (folderId?: number | null) => Promise<TextDocument>;
+      getOrCreateSpecialDocument: (role: SpecialDocumentRole) => Promise<TextDocument>;
       getDocument: (id: number) => Promise<TextDocument | null>;
       updateDocument: (id: number, input: DocumentInput, expectedLibraryPath?: string) => Promise<TextDocument>;
       markOpened: (id: number) => Promise<TextDocument>;

@@ -54,7 +54,7 @@ app
       } = await import('../dist-electron/database.js');
       const { ActiveLibraryManager } = await import('../dist-electron/library-manager.js');
 
-      assert(CURRENT_SCHEMA_VERSION === 2, 'CURRENT_SCHEMA_VERSION doit rester a 2.');
+      assert(CURRENT_SCHEMA_VERSION === 3, 'CURRENT_SCHEMA_VERSION doit etre a 3.');
       assert(TEXTOTHEQUE_APPLICATION_ID === 1413830735, 'L application_id TEXO definitif a change.');
 
       const freshPath = databasePath('fresh');
@@ -76,6 +76,14 @@ app
         favorite: true,
         folder_id: childFolder.id,
       });
+      const sourceTodo = sourceDb.updateDocument(sourceDb.getOrCreateSpecialDocument('todo').id, {
+        title: 'TODO sauvegarde',
+        content: 'Contenu TODO dans le snapshot.',
+        notes: '',
+        status: 'active',
+        favorite: false,
+        folder_id: null,
+      });
       const trashedDocument = sourceDb.updateDocument(sourceDb.createDocument().id, {
         title: 'Document en corbeille',
         content: 'Contenu supprime logiquement.',
@@ -95,6 +103,7 @@ app
       withDatabase(new Database(backupPath, { readonly: true, fileMustExist: true }), (backupDb) => {
         const backupDocument = backupDb.prepare('SELECT * FROM documents WHERE id = ?').get(savedDocument.id);
         const backupTrash = backupDb.prepare('SELECT * FROM documents WHERE id = ?').get(trashedDocument.id);
+        const backupTodo = backupDb.prepare('SELECT * FROM documents WHERE id = ?').get(sourceTodo.id);
         const backupFolders = backupDb.prepare('SELECT * FROM folders ORDER BY id').all();
         assert(backupDocument.title === 'Contenu representatif', 'Le titre representatif manque dans le backup.');
         assert(backupDocument.content === 'Texte complet present dans le snapshot.', 'Le contenu manque dans le backup.');
@@ -102,6 +111,8 @@ app
         assert(backupDocument.favorite === 1, 'Le favori manque dans le backup.');
         assert(backupDocument.folder_id === childFolder.id, 'Le classement manque dans le backup.');
         assert(Boolean(backupTrash.deleted_at), 'La corbeille logique manque dans le backup.');
+        assert(backupTodo.special_role === 'todo', 'Le role du TODO manque dans le backup.');
+        assert(backupTodo.content === 'Contenu TODO dans le snapshot.', 'Le contenu du TODO manque dans le backup.');
         assert(backupFolders.length === 2, 'Les dossiers ne sont pas complets dans le backup.');
       });
 

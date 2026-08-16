@@ -13,7 +13,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { DocumentInput, type TextothequeDatabase } from './database.js';
+import { type DocumentInput, type SpecialDocumentRole, type TextothequeDatabase } from './database.js';
 import { ActiveLibraryManager, type LibraryMenuAction } from './library-manager.js';
 import { LibraryHistoryRegistry, type KnownLibrary } from './library-history.js';
 import {
@@ -175,6 +175,9 @@ function registerIpcHandlers(): void {
   registerIpcHandler('folders:create', (_event, parentId: number | null) => getDatabase().createFolder(parentId));
   registerIpcHandler('folders:rename', (_event, id: number, name: string) => getDatabase().renameFolder(id, name));
   registerIpcHandler('documents:create', (_event, folderId: number | null) => getDatabase().createDocument(folderId));
+  registerIpcHandler('documents:get-or-create-special', (_event, role: SpecialDocumentRole) =>
+    getDatabase().getOrCreateSpecialDocument(role)
+  );
   registerIpcHandler('documents:get', (_event, id: number) => getDatabase().getDocument(id));
   registerIpcHandler('documents:update', (_event, id: number, input: DocumentInput, expectedLibraryPath?: string) => {
     const database = getDatabase();

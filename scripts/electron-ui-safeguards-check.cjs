@@ -72,7 +72,7 @@ let libraryInfo = {
   path: 'C:\\temporary\\test-ui.sqlite',
   fileName: 'test-ui.sqlite',
   applicationId: 1413830735,
-  userVersion: 2,
+  userVersion: 3,
   isTextotheque: true,
 };
 const forcedFailureCounts = new Map();
@@ -91,7 +91,7 @@ function rejectIfForced(channel) {
 }
 
 function cloneDocument(document) {
-  return { ...document };
+  return { special_role: null, ...document };
 }
 
 app
@@ -117,7 +117,7 @@ app
       if (libraryInspectInvocations === 1) event.sender.send('library:menu-action', { action: 'known', path: candidatePath });
       return {
         status: 'compatible',
-        inspection: { path: candidatePath, fileName: path.basename(candidatePath), readable: true, applicationId: 1413830735, userVersion: 2, isTextotheque: true, compatibility: 'compatible' },
+        inspection: { path: candidatePath, fileName: path.basename(candidatePath), readable: true, applicationId: 1413830735, userVersion: 3, isTextotheque: true, compatibility: 'compatible' },
         library: null,
         backupPath: null,
       };
@@ -178,6 +178,28 @@ app
       documents = [created, ...documents];
       return cloneDocument(created);
     });
+    ipcMain.handle('documents:get-or-create-special', (_event, role) => {
+      rejectIfForced('documents:get-or-create-special');
+      const existing = documents.find((document) => document.special_role === role);
+      if (existing) return cloneDocument(existing);
+      const created = {
+        id: Math.max(...documents.map((document) => document.id)) + 1,
+        title: 'TODO',
+        content: '',
+        content_format: 'plain',
+        status: 'active',
+        favorite: 0,
+        created_at: '2026-08-16T12:00:00.000Z',
+        updated_at: '2026-08-16T12:00:00.000Z',
+        last_opened_at: '2026-08-16T12:00:00.000Z',
+        deleted_at: null,
+        notes: '',
+        folder_id: null,
+        special_role: role,
+      };
+      documents = [created, ...documents];
+      return cloneDocument(created);
+    });
     ipcMain.handle('documents:get', (_event, id) => cloneDocument(documents.find((document) => document.id === id)));
     ipcMain.handle('documents:update', (_event, id, input) => {
       rejectIfForced('documents:update');
@@ -200,6 +222,7 @@ app
     ipcMain.handle('documents:trash', (_event, id) => {
       rejectIfForced('documents:trash');
       const document = documents.find((item) => item.id === id);
+      if (document.special_role) throw new Error('permanent document');
       document.deleted_at = '2026-07-09T00:04:00.000Z';
       document.updated_at = '2026-07-09T00:04:00.000Z';
       return cloneDocument(document);
@@ -298,7 +321,7 @@ app
         const waitFor = async (predicate, label) => {
           const start = Date.now();
           while (Date.now() - start < 3000) {
-            const value = predicate();
+            const value = await predicate();
             if (value) return value;
             await new Promise((resolve) => setTimeout(resolve, 30));
           }
@@ -391,7 +414,7 @@ app
         }
         const viewButtons = document.querySelectorAll('.nav-view-button');
         if (viewButtons.length !== 2) throw new Error('document view buttons missing');
-        if (expectedAppVersion !== '0.1.22') throw new Error('unexpected application version');
+        if (expectedAppVersion !== '0.1.23') throw new Error('unexpected application version');
         const initialExpandedState = JSON.parse(window.localStorage.getItem('textotheque:expanded-folders:v2') ?? '[]');
         if (initialExpandedState.length !== 0) throw new Error('folders should be closed by default');
         await waitFor(() => window.localStorage.getItem('textotheque:pane-layout:v2'), 'pane layout stored');
@@ -1216,6 +1239,101 @@ app
     `);
     if (!switchResult.ok) {
       throw new Error(`Known library UI refresh check failed: ${JSON.stringify(switchResult)}; inspect=${libraryInspectInvocations}; open=${libraryOpenInvocations}`);
+    }
+
+    const specialTodoResult = await window.webContents.executeJavaScript(`
+      (async () => {
+        const waitFor = async (predicate, label, timeout = 4000) => {
+          const start = Date.now();
+          while (Date.now() - start < timeout) {
+            const value = await predicate();
+            if (value) return value;
+            await new Promise((resolve) => setTimeout(resolve, 30));
+          }
+          throw new Error('Timeout: ' + label);
+        };
+        const findButton = (selector, text) =>
+          Array.from(document.querySelectorAll(selector)).find((button) => button.textContent.includes(text));
+        const setNativeValue = (element, value) => {
+          const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+          Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value);
+          element.dispatchEvent(new Event('input', { bubbles: true }));
+        };
+
+        const todoButton = document.querySelector('.todo-toolbar-button');
+        if (!todoButton || todoButton.title !== 'Ouvrir le TODO — Ctrl+Shift+T') {
+          throw new Error('TODO toolbar button or tooltip missing');
+        }
+        findButton('.nav-view-button', 'Tous les textes').click();
+        await waitFor(() => document.querySelector('.document-item'), 'library B document');
+        document.querySelector('.document-item').click();
+        const editor = await waitFor(() => document.querySelector('.content-editor'), 'selected document editor');
+        setNativeValue(editor, 'Modification qui doit rester protegee');
+        await waitFor(() => document.querySelector('.title-dirty-marker'), 'dirty state before TODO');
+
+        todoButton.click();
+        let dialog = await waitFor(() => document.querySelector('.confirm-dialog'), 'dirty guard before TODO');
+        findButton('.confirm-dialog .secondary-button', 'Annuler').click();
+        await waitFor(() => !document.querySelector('.confirm-dialog'), 'TODO dirty guard cancellation');
+        if ((await window.textotheque.listDocuments()).some((item) => item.special_role === 'todo')) {
+          throw new Error('TODO was created before dirty guard approval');
+        }
+
+        todoButton.click();
+        dialog = await waitFor(() => document.querySelector('.confirm-dialog'), 'second TODO dirty guard');
+        dialog.querySelector('.danger-button').click();
+        await waitFor(() => document.querySelector('.title-input')?.value === 'TODO', 'lazy TODO creation');
+        await waitFor(() => document.querySelector('.todo-toolbar-button')?.getAttribute('aria-pressed') === 'true', 'active TODO button');
+        if (document.querySelector('.trash-button')) throw new Error('trash action must be unavailable for TODO');
+        const todoId = Number(document.querySelector('.status-bar')?.textContent.match(/Document (\\d+)/)?.[1]);
+        const countAfterCreation = (await window.textotheque.listDocuments()).filter((item) => item.special_role === 'todo').length;
+        if (countAfterCreation !== 1) throw new Error('lazy TODO creation did not produce exactly one document');
+
+        const todoEditor = document.querySelector('.content-editor');
+        setNativeValue(todoEditor, 'Contenu recherche hippocampe TODO');
+        await waitFor(async () => {
+          const persisted = (await window.textotheque.listDocuments()).find((item) => item.id === todoId);
+          return persisted?.content === 'Contenu recherche hippocampe TODO';
+        }, 'TODO shared autosave', 5000);
+
+        const search = document.querySelector('.search-input-row input');
+        setNativeValue(search, 'hippocampe');
+        await waitFor(() => document.querySelector('.document-item')?.textContent.includes('TODO'), 'TODO search result');
+        document.querySelector('.clear-search-button').click();
+        await waitFor(() => document.querySelector('.search-input-row input')?.value === '', 'clear TODO search');
+
+        document.querySelector('.navigation-home').click();
+        await waitFor(() => document.querySelector('.folder-section'), 'normal navigation after TODO');
+        const normalTreeText = [
+          document.querySelector('.folder-section')?.textContent ?? '',
+          document.querySelector('.unfiled-tree-section')?.textContent ?? '',
+        ].join(' ');
+        if (normalTreeText.includes('TODO')) throw new Error('TODO leaked into normal navigation tree');
+
+        findButton('.nav-view-button', 'Tous les textes').click();
+        await waitFor(
+          () => Array.from(document.querySelectorAll('.document-item')).some((item) => item.textContent.includes('TODO')),
+          'TODO in all documents'
+        );
+        const normalDocument = Array.from(document.querySelectorAll('.document-item')).find((item) => !item.textContent.includes('TODO'));
+        normalDocument.click();
+        await waitFor(() => document.querySelector('.title-input')?.value !== 'TODO', 'normal document before shortcut');
+        const shortcut = new KeyboardEvent('keydown', { key: 'T', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true });
+        window.dispatchEvent(shortcut);
+        await waitFor(() => document.querySelector('.title-input')?.value === 'TODO', 'Ctrl+Shift+T opens TODO');
+        if (!shortcut.defaultPrevented) throw new Error('Ctrl+Shift+T was not intercepted');
+        const countBeforeNoop = (await window.textotheque.listDocuments()).length;
+        document.querySelector('.todo-toolbar-button').click();
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const countAfterNoop = (await window.textotheque.listDocuments()).length;
+        return {
+          ok: countBeforeNoop === countAfterNoop &&
+            (await window.textotheque.listDocuments()).filter((item) => item.special_role === 'todo').length === 1,
+        };
+      })().catch((error) => ({ ok: false, message: error.stack }))
+    `);
+    if (!specialTodoResult.ok) {
+      throw new Error(`Special TODO UI check failed: ${specialTodoResult.message ?? 'unknown error'}`);
     }
 
     const unexpectedRejectionLog = rendererConsoleMessages.find((message) =>

@@ -8,7 +8,7 @@ app
       path: 'C:\\temporary\\textotheque.sqlite',
       fileName: 'textotheque.sqlite',
       applicationId: 1413830735,
-      userVersion: 2,
+      userVersion: 3,
       isTextotheque: true,
     }));
     let exportAvailable = false;
@@ -30,7 +30,7 @@ app
     ipcMain.handle('library:open', (_event, candidatePath, migrationApproved) => ({
       status: 'opened',
       inspection: { path: candidatePath, compatibility: 'compatible' },
-      library: { path: candidatePath, fileName: 'other.sqlite', applicationId: 1413830735, userVersion: 2, isTextotheque: true },
+      library: { path: candidatePath, fileName: 'other.sqlite', applicationId: 1413830735, userVersion: 3, isTextotheque: true },
       backupPath: migrationApproved ? 'C:\\temporary\\pre-migration.sqlite' : null,
     }));
     ipcMain.handle('library:inspect', (_event, candidatePath) => ({
@@ -42,7 +42,7 @@ app
     });
     ipcMain.handle('library:create', (_event, candidatePath) => ({
       status: 'created',
-      library: { path: candidatePath, fileName: 'created.sqlite', applicationId: 1413830735, userVersion: 2, isTextotheque: true },
+      library: { path: candidatePath, fileName: 'created.sqlite', applicationId: 1413830735, userVersion: 3, isTextotheque: true },
     }));
     ipcMain.handle('documents:list', () => []);
     ipcMain.handle('documents:list-deleted', () => []);
@@ -59,6 +59,22 @@ app
       deleted_at: null,
       notes: '',
       folder_id: folderId,
+      special_role: null,
+    }));
+    ipcMain.handle('documents:get-or-create-special', (_event, role) => ({
+      id: 2,
+      title: 'TODO',
+      content: '',
+      content_format: 'plain',
+      status: 'active',
+      favorite: 0,
+      created_at: '2026-07-09T00:00:00.000Z',
+      updated_at: '2026-07-09T00:00:00.000Z',
+      last_opened_at: '2026-07-09T00:00:00.000Z',
+      deleted_at: null,
+      notes: '',
+      folder_id: null,
+      special_role: role,
     }));
     ipcMain.handle('folders:list', () => []);
     ipcMain.handle('folders:create', (_event, parentId) => ({
@@ -117,6 +133,7 @@ app
         if (typeof api.listDocuments !== 'function') return { ok: false, reason: 'listDocuments missing' };
         if (typeof api.listDeletedDocuments !== 'function') return { ok: false, reason: 'listDeletedDocuments missing' };
         if (typeof api.createDocument !== 'function') return { ok: false, reason: 'createDocument missing' };
+        if (typeof api.getOrCreateSpecialDocument !== 'function') return { ok: false, reason: 'getOrCreateSpecialDocument missing' };
         if (typeof api.listFolders !== 'function') return { ok: false, reason: 'listFolders missing' };
         if (typeof api.createFolder !== 'function') return { ok: false, reason: 'createFolder missing' };
         if (typeof api.renameFolder !== 'function') return { ok: false, reason: 'renameFolder missing' };
@@ -151,6 +168,7 @@ app
         const folders = await api.listFolders();
         const createdFolder = await api.createFolder(null);
         const created = await api.createDocument(createdFolder.id);
+        const todo = await api.getOrCreateSpecialDocument('todo');
         const renamedFolder = await api.renameFolder(createdFolder.id, 'Notes');
         const trashed = await api.trashDocument(created.id);
         const restored = await api.restoreDocument(created.id);
@@ -166,7 +184,7 @@ app
           ok: Array.isArray(documents) &&
             libraryInfo.fileName === 'textotheque.sqlite' &&
             libraryInfo.applicationId === 1413830735 &&
-            libraryInfo.userVersion === 2 &&
+            libraryInfo.userVersion === 3 &&
             startupNotice === 'fallback temporaire' &&
             canceledBackup.canceled === true &&
             canceledBackup.path === null &&
@@ -186,6 +204,7 @@ app
             created &&
             created.id === 1 &&
             created.folder_id === createdFolder.id &&
+            todo.special_role === 'todo' &&
             createdFolder &&
             createdFolder.name === 'Nouveau dossier' &&
             renamedFolder &&

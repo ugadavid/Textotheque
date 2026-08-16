@@ -108,7 +108,7 @@ function inspectCurrentSchema(dbPath, expectedVersion, expectedApplicationId) {
     schema.applicationId === expectedApplicationId,
     `L application_id final attendu est ${expectedApplicationId}, pas ${schema.applicationId}.`
   );
-  for (const column of ['deleted_at', 'folder_id']) {
+  for (const column of ['deleted_at', 'folder_id', 'special_role']) {
     assert(schema.documentColumns.has(column), `La colonne documents.${column} est absente.`);
   }
   for (const column of ['id', 'name', 'parent_id', 'position', 'created_at', 'updated_at']) {
@@ -119,6 +119,7 @@ function inspectCurrentSchema(dbPath, expectedVersion, expectedApplicationId) {
     'idx_documents_last_opened_at',
     'idx_documents_deleted_at',
     'idx_documents_folder_id',
+    'idx_documents_special_role_unique',
   ]) {
     assert(schema.documentIndexes.has(index), `L index ${index} est absent.`);
   }
@@ -131,6 +132,7 @@ function exerciseMigratedDocument(db, title, expectedContent) {
   assert(document.content === expectedContent, `Le contenu du document ${title} n a pas ete conserve.`);
   assert(document.deleted_at === null, `Le document ${title} ne doit pas etre en corbeille.`);
   assert(document.folder_id === null, `Le document ${title} doit rester non classe.`);
+  assert(document.special_role === null, `Le document ${title} doit rester ordinaire apres migration.`);
 
   const trashed = db.trashDocument(document.id);
   assert(Boolean(trashed.deleted_at), `Le document ${title} ne peut pas etre mis a la corbeille.`);
@@ -222,8 +224,8 @@ function testUnversionedCurrentDatabase(createTextothequeDatabase, currentVersio
     (adoptedDb) => adoptedDb.pragma('schema_version', { simple: true })
   );
   assert(
-    schemaVersionAfterAdoption === schemaVersionBeforeAdoption,
-    'L adoption de la structure actuelle ne doit pas rejouer de DDL.'
+    schemaVersionAfterAdoption > schemaVersionBeforeAdoption,
+    'La structure v2 non versionnee doit recevoir la migration DDL vers v3.'
   );
   inspectCurrentSchema(dbPath, currentVersion, applicationId);
 
@@ -242,7 +244,7 @@ app
     try {
       const { createTextothequeDatabase, CURRENT_SCHEMA_VERSION, TEXTOTHEQUE_APPLICATION_ID } = await import('../dist-electron/database.js');
 
-      assert(CURRENT_SCHEMA_VERSION === 2, 'Le test legacy doit etre synchronise avec le schema courant v2.');
+      assert(CURRENT_SCHEMA_VERSION === 3, 'Le test legacy doit etre synchronise avec le schema courant v3.');
       assert(TEXTOTHEQUE_APPLICATION_ID === 1413830735, 'L application_id Textotheque definitif a change.');
       testFreshDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION, TEXTOTHEQUE_APPLICATION_ID);
       testPreTrashLegacyDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION, TEXTOTHEQUE_APPLICATION_ID);
