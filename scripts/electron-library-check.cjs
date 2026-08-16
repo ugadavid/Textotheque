@@ -54,7 +54,7 @@ app
       } = await import('../dist-electron/database.js');
       const { ActiveLibraryManager } = await import('../dist-electron/library-manager.js');
 
-      assert(CURRENT_SCHEMA_VERSION === 4, 'CURRENT_SCHEMA_VERSION doit etre a 4.');
+      assert(CURRENT_SCHEMA_VERSION === 5, 'CURRENT_SCHEMA_VERSION doit etre a 5.');
       assert(TEXTOTHEQUE_APPLICATION_ID === 1413830735, 'L application_id TEXO definitif a change.');
 
       const freshPath = databasePath('fresh');

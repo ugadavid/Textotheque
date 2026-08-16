@@ -1,6 +1,7 @@
 import type { DocumentInput, Folder, SpecialDocumentRole, TextDocument } from './document';
 import type { CatalogDocument, DocumentCatalogOptions } from './catalog';
 import type { SearchDocument, SearchDocumentsOptions } from './search';
+import type { SavedSearchDefinition, SavedSearchInput, SavedSearchSummary, SearchMenuAction, SearchMenuState } from './saved-search';
 import type { LibraryBackupResult, LibraryCreateResult, LibraryCreateSelection, LibraryInfo, LibraryMenuAction, LibraryOpenResult } from './library';
 import type { FileMenuAction, TextExportDraft, TextExportResult } from './text-export';
 
@@ -22,6 +23,14 @@ declare global {
       listDocuments: () => Promise<TextDocument[]>;
       listDocumentCatalog: (options: DocumentCatalogOptions) => Promise<CatalogDocument[]>;
       searchDocuments: (options: SearchDocumentsOptions) => Promise<SearchDocument[]>;
+      listSavedSearches: () => Promise<SavedSearchSummary[]>;
+      getSavedSearch: (id: number) => Promise<SavedSearchDefinition | null>;
+      createSavedSearch: (input: SavedSearchInput, expectedLibraryPath: string) => Promise<SavedSearchDefinition>;
+      updateSavedSearch: (id: number, criteria: SearchDocumentsOptions, expectedLibraryPath: string) => Promise<SavedSearchDefinition>;
+      renameSavedSearch: (id: number, name: string, expectedLibraryPath: string) => Promise<SavedSearchDefinition>;
+      deleteSavedSearch: (id: number, expectedLibraryPath: string) => Promise<void>;
+      setSearchMenuState: (state: SearchMenuState) => Promise<void>;
+      onSearchMenuAction: (callback: (action: SearchMenuAction) => void) => () => void;
       listDeletedDocuments: () => Promise<TextDocument[]>;
       listFolders: () => Promise<Folder[]>;
       createFolder: (parentId: number | null) => Promise<Folder>;

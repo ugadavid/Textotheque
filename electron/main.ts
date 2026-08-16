@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import {
   type DocumentCatalogOptions,
   type DocumentInput,
+  type SavedSearchInput,
   type SearchDocumentsOptions,
   type SpecialDocumentRole,
   type TextothequeDatabase,
@@ -29,6 +30,7 @@ import {
   type TextExportDraft,
   type TextExportResult,
 } from './text-export.js';
+import { buildSearchMenu, type SearchMenuAction, type SearchMenuState } from './search-menu.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -45,6 +47,7 @@ let libraryManager: ActiveLibraryManager | null = null;
 let libraryHistory: LibraryHistoryRegistry | null = null;
 let closeApproved = false;
 let documentExportAvailable = false;
+let searchMenuState: SearchMenuState = { activeSavedSearchId: null, modified: false, canSave: true };
 
 function getDatabasePath(): string {
   return process.env.TEXTOTHEQUE_DB_PATH ?? path.join(app.getPath('userData'), 'textotheque.sqlite');
@@ -108,7 +111,10 @@ function registerIpcHandlers(): void {
   });
   registerIpcHandler('library:open', (_event, candidatePath: string, migrationApproved: boolean) =>
     getLibraryManager().openCandidate(candidatePath, migrationApproved).then((result) => {
-      if (result.status === 'opened') refreshApplicationMenu();
+      if (result.status === 'opened') {
+        searchMenuState = { activeSavedSearchId: null, modified: false, canSave: true };
+        refreshApplicationMenu();
+      }
       return result;
     })
   );
@@ -127,7 +133,10 @@ function registerIpcHandlers(): void {
   });
   registerIpcHandler('library:create', (_event, candidatePath: string) => {
     const result = getLibraryManager().createCandidate(candidatePath);
-    if (result.status === 'created') refreshApplicationMenu();
+    if (result.status === 'created') {
+      searchMenuState = { activeSavedSearchId: null, modified: false, canSave: true };
+      refreshApplicationMenu();
+    }
     return result;
   });
   registerIpcHandler('library:backup', async () => {
@@ -183,6 +192,39 @@ function registerIpcHandlers(): void {
   registerIpcHandler('documents:search', (_event, options: SearchDocumentsOptions) =>
     getDatabase().searchDocuments(options)
   );
+  registerIpcHandler('saved-searches:list', () => getDatabase().listSavedSearches());
+  registerIpcHandler('saved-searches:get', (_event, id: number) => getDatabase().getSavedSearch(id));
+  registerIpcHandler('saved-searches:create', (_event, input: SavedSearchInput, expectedLibraryPath: string) => {
+    const database = getDatabase();
+    if (!database.isCurrentLibraryPath(expectedLibraryPath)) throw new Error('Le contexte de bibliothèque a changé.');
+    const result = database.createSavedSearch(input);
+    refreshApplicationMenu();
+    return result;
+  });
+  registerIpcHandler('saved-searches:update', (_event, id: number, criteria: SearchDocumentsOptions, expectedLibraryPath: string) => {
+    const database = getDatabase();
+    if (!database.isCurrentLibraryPath(expectedLibraryPath)) throw new Error('Le contexte de bibliothèque a changé.');
+    const result = database.updateSavedSearch(id, criteria);
+    refreshApplicationMenu();
+    return result;
+  });
+  registerIpcHandler('saved-searches:rename', (_event, id: number, name: string, expectedLibraryPath: string) => {
+    const database = getDatabase();
+    if (!database.isCurrentLibraryPath(expectedLibraryPath)) throw new Error('Le contexte de bibliothèque a changé.');
+    const result = database.renameSavedSearch(id, name);
+    refreshApplicationMenu();
+    return result;
+  });
+  registerIpcHandler('saved-searches:delete', (_event, id: number, expectedLibraryPath: string) => {
+    const database = getDatabase();
+    if (!database.isCurrentLibraryPath(expectedLibraryPath)) throw new Error('Le contexte de bibliothèque a changé.');
+    database.deleteSavedSearch(id);
+    refreshApplicationMenu();
+  });
+  registerIpcHandler('search:set-menu-state', (_event, state: SearchMenuState) => {
+    searchMenuState = state;
+    refreshApplicationMenu();
+  });
   registerIpcHandler('documents:list-deleted', () => getDatabase().listDeletedDocuments());
   registerIpcHandler('folders:list', () => getDatabase().listFolders());
   registerIpcHandler('folders:create', (_event, parentId: number | null) => getDatabase().createFolder(parentId));
@@ -217,6 +259,10 @@ function sendFileMenuAction(action: FileMenuAction): void {
   mainWindow?.webContents.send('file:menu-action', action);
 }
 
+function sendSearchMenuAction(action: SearchMenuAction): void {
+  mainWindow?.webContents.send('search:menu-action', action);
+}
+
 function knownLibraryLabels(libraries: KnownLibrary[]): Map<string, string> {
   const basenameCounts = new Map<string, number>();
   for (const library of libraries) {
@@ -244,6 +290,7 @@ function refreshApplicationMenu(): void {
         click: () => sendLibraryMenuAction({ action: 'known', path: library.path }),
       }))
     : [{ label: 'Aucune bibliothèque connue', enabled: false }];
+  const savedSearches = manager.getDatabase().listSavedSearches();
   const template: MenuItemConstructorOptions[] = [
     {
       label: 'Fichier',
@@ -271,6 +318,7 @@ function refreshApplicationMenu(): void {
         { label: 'Sauvegarder une copie…', click: () => sendLibraryMenuAction({ action: 'backup' }) },
       ],
     },
+    buildSearchMenu(savedSearches, searchMenuState, sendSearchMenuAction),
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }

@@ -5,6 +5,9 @@ import type {
   Folder,
   LibraryBackupResult,
   LibraryInfo,
+  SavedSearchDefinition,
+  SavedSearchInput,
+  SavedSearchSummary,
   SearchDocument,
   SearchDocumentsOptions,
   SpecialDocumentRole,
@@ -12,6 +15,7 @@ import type {
 } from './database.js';
 import type { LibraryCreateResult, LibraryCreateSelection, LibraryMenuAction, LibraryOpenResult } from './library-manager.js';
 import type { FileMenuAction, TextExportDraft, TextExportResult } from './text-export.js';
+import type { SearchMenuAction, SearchMenuState } from './search-menu.js';
 
 const { contextBridge, ipcRenderer } = require('electron') as typeof import('electron');
 
@@ -43,6 +47,22 @@ const api = {
     ipcRenderer.invoke('documents:list-catalog', options),
   searchDocuments: (options: SearchDocumentsOptions): Promise<SearchDocument[]> =>
     ipcRenderer.invoke('documents:search', options),
+  listSavedSearches: (): Promise<SavedSearchSummary[]> => ipcRenderer.invoke('saved-searches:list'),
+  getSavedSearch: (id: number): Promise<SavedSearchDefinition | null> => ipcRenderer.invoke('saved-searches:get', id),
+  createSavedSearch: (input: SavedSearchInput, expectedLibraryPath: string): Promise<SavedSearchDefinition> =>
+    ipcRenderer.invoke('saved-searches:create', input, expectedLibraryPath),
+  updateSavedSearch: (id: number, criteria: SearchDocumentsOptions, expectedLibraryPath: string): Promise<SavedSearchDefinition> =>
+    ipcRenderer.invoke('saved-searches:update', id, criteria, expectedLibraryPath),
+  renameSavedSearch: (id: number, name: string, expectedLibraryPath: string): Promise<SavedSearchDefinition> =>
+    ipcRenderer.invoke('saved-searches:rename', id, name, expectedLibraryPath),
+  deleteSavedSearch: (id: number, expectedLibraryPath: string): Promise<void> =>
+    ipcRenderer.invoke('saved-searches:delete', id, expectedLibraryPath),
+  setSearchMenuState: (state: SearchMenuState): Promise<void> => ipcRenderer.invoke('search:set-menu-state', state),
+  onSearchMenuAction: (callback: (action: SearchMenuAction) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, action: SearchMenuAction) => callback(action);
+    ipcRenderer.on('search:menu-action', listener);
+    return () => ipcRenderer.removeListener('search:menu-action', listener);
+  },
   listDeletedDocuments: (): Promise<TextDocument[]> => ipcRenderer.invoke('documents:list-deleted'),
   listFolders: (): Promise<Folder[]> => ipcRenderer.invoke('folders:list'),
   createFolder: (parentId: number | null): Promise<Folder> => ipcRenderer.invoke('folders:create', parentId),

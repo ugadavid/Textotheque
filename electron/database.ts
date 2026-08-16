@@ -65,6 +65,22 @@ export interface SearchDocumentsOptions {
   direction: CatalogSortDirection;
 }
 
+export interface SavedSearchSummary {
+  id: number;
+  name: string;
+  updatedAt: string;
+}
+
+export interface SavedSearchInput extends SearchDocumentsOptions {
+  name: string;
+}
+
+export interface SavedSearchDefinition extends SavedSearchInput {
+  id: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface TextDocument {
   id: number;
   title: string;
@@ -99,7 +115,7 @@ export interface DocumentInput {
   folder_id: number | null;
 }
 
-export const CURRENT_SCHEMA_VERSION = 4;
+export const CURRENT_SCHEMA_VERSION = 5;
 export const TEXTOTHEQUE_APPLICATION_ID = 0x5445584f;
 export const MAX_AUTOMATIC_DOCUMENTS_PER_DAY = 99;
 export const SEARCH_SNIPPET_START = '\uE000';
@@ -194,7 +210,10 @@ export function searchDateBounds(filter: SearchDateFilter, referenceDate = new D
   }
   if (filter.period === 'all') return { lower: null, upperExclusive: null };
   if (filter.period !== 'custom') {
-    return { lower: datePeriodStartIso(filter.period, referenceDate), upperExclusive: null };
+    const upperExclusive = new Date(referenceDate);
+    upperExclusive.setHours(0, 0, 0, 0);
+    upperExclusive.setDate(upperExclusive.getDate() + 1);
+    return { lower: datePeriodStartIso(filter.period, referenceDate), upperExclusive: upperExclusive.toISOString() };
   }
 
   const fromDate = filter.from ? parseLocalCivilDate(filter.from, 'La date de début') : null;
@@ -313,6 +332,115 @@ function buildStructuredSearchSql(options: SearchDocumentsOptions, referenceDate
   return { commonTableExpression, predicates, parameters };
 }
 
+const searchFieldOrder: SearchTextField[] = ['title', 'content', 'notes'];
+const documentStatusOrder: DocumentStatus[] = ['draft', 'active', 'to_review', 'final', 'archived'];
+const searchMatchModes: SearchMatchMode[] = ['all', 'any', 'phrase'];
+const searchSortFields: SearchSortField[] = ['relevance', 'title', 'folder', 'status', 'favorite', 'created_at', 'updated_at'];
+
+function normalizedSavedSearchDate(filter: SearchDateFilter, label: string): SearchDateFilter {
+  if (!filter) throw new Error(`${label} : filtre de date manquant.`);
+  searchDateBounds(filter);
+  if (filter.period === 'custom') {
+    if (!filter.from && !filter.to) throw new Error(`${label} : une plage personnalisée exige au moins une borne.`);
+    return { period: filter.period, from: filter.from, to: filter.to };
+  }
+  if (filter.from || filter.to) throw new Error(`${label} : les dates civiles sont réservées aux plages personnalisées.`);
+  return { period: filter.period, from: null, to: null };
+}
+
+function normalizeSavedSearchInput(input: SavedSearchInput): SavedSearchInput {
+  const name = input?.name?.trim() ?? '';
+  if (name.length < 1 || name.length > 120) {
+    throw new Error('Le nom de la recherche doit contenir entre 1 et 120 caractères.');
+  }
+  const query = input.query.trim();
+  if (!Array.isArray(input.fields) || input.fields.some((field) => !searchFieldOrder.includes(field))) {
+    throw new Error('La recherche contient une zone inconnue.');
+  }
+  const fields = searchFieldOrder.filter((field) => input.fields.includes(field));
+  if (query && fields.length === 0) throw new Error('Une recherche textuelle exige au moins une zone.');
+  if (!searchMatchModes.includes(input.matchMode)) throw new Error('Mode de correspondance inconnu.');
+  if (!input.folderSelection || !Array.isArray(input.folderSelection.folderIds) ||
+      typeof input.folderSelection.includeUnclassified !== 'boolean') {
+    throw new Error('Sélection de dossiers invalide.');
+  }
+  const folderIds = [...new Set(input.folderSelection.folderIds)].sort((left, right) => left - right);
+  if (folderIds.some((folderId) => !Number.isSafeInteger(folderId) || folderId <= 0)) {
+    throw new Error('La sélection de dossiers contient un identifiant invalide.');
+  }
+  if (!Array.isArray(input.statuses) || input.statuses.some((status) => !documentStatusOrder.includes(status))) {
+    throw new Error('La sélection contient un statut inconnu.');
+  }
+  const statuses = documentStatusOrder.filter((status) => input.statuses.includes(status));
+  if (typeof input.favoriteOnly !== 'boolean') throw new Error('Filtre favori invalide.');
+  if (!searchSortFields.includes(input.sortBy)) throw new Error('Champ de tri recherche inconnu.');
+  if (!['asc', 'desc'].includes(input.direction)) throw new Error('Direction de tri recherche inconnue.');
+  if (!query && input.sortBy === 'relevance') throw new Error('Le tri par pertinence exige une recherche textuelle.');
+
+  return {
+    name,
+    query,
+    fields,
+    matchMode: input.matchMode,
+    folderSelection: { folderIds, includeUnclassified: input.folderSelection.includeUnclassified },
+    statuses,
+    favoriteOnly: input.favoriteOnly,
+    created: normalizedSavedSearchDate(input.created, 'Création'),
+    modified: normalizedSavedSearchDate(input.modified, 'Modification'),
+    sortBy: input.sortBy,
+    direction: input.direction,
+  };
+}
+
+interface SavedSearchRow {
+  id: number;
+  name: string;
+  query_text: string;
+  search_title: number;
+  search_content: number;
+  search_notes: number;
+  match_mode: SearchMatchMode;
+  include_unclassified: number;
+  favorite_only: number;
+  created_period: DatePeriod;
+  created_from: string | null;
+  created_to: string | null;
+  modified_period: DatePeriod;
+  modified_from: string | null;
+  modified_to: string | null;
+  sort_field: SearchSortField;
+  sort_direction: CatalogSortDirection;
+  created_at: string;
+  updated_at: string;
+}
+
+function savedSearchDefinition(
+  row: SavedSearchRow,
+  folderIds: number[],
+  statuses: DocumentStatus[]
+): SavedSearchDefinition {
+  return {
+    id: row.id,
+    name: row.name,
+    query: row.query_text,
+    fields: searchFieldOrder.filter((field) => ({
+      title: row.search_title,
+      content: row.search_content,
+      notes: row.search_notes,
+    })[field] === 1),
+    matchMode: row.match_mode,
+    folderSelection: { folderIds, includeUnclassified: row.include_unclassified === 1 },
+    statuses,
+    favoriteOnly: row.favorite_only === 1,
+    created: { period: row.created_period, from: row.created_from, to: row.created_to },
+    modified: { period: row.modified_period, from: row.modified_from, to: row.modified_to },
+    sortBy: row.sort_field,
+    direction: row.sort_direction,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 export function localDocumentTitleDate(date: Date): string {
   return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
 }
@@ -357,6 +485,52 @@ BEGIN
 END;
 `;
 
+const savedSearchSchema = `
+CREATE TABLE IF NOT EXISTS saved_searches (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE CHECK (length(name) BETWEEN 1 AND 120 AND name = trim(name)),
+  query_text TEXT NOT NULL DEFAULT '',
+  search_title INTEGER NOT NULL CHECK (search_title IN (0, 1)),
+  search_content INTEGER NOT NULL CHECK (search_content IN (0, 1)),
+  search_notes INTEGER NOT NULL CHECK (search_notes IN (0, 1)),
+  match_mode TEXT NOT NULL CHECK (match_mode IN ('all', 'any', 'phrase')),
+  include_unclassified INTEGER NOT NULL CHECK (include_unclassified IN (0, 1)),
+  favorite_only INTEGER NOT NULL CHECK (favorite_only IN (0, 1)),
+  created_period TEXT NOT NULL CHECK (created_period IN ('all', 'last7days', 'last15days', 'last30days', 'thisYear', 'custom')),
+  created_from TEXT,
+  created_to TEXT,
+  modified_period TEXT NOT NULL CHECK (modified_period IN ('all', 'last7days', 'last15days', 'last30days', 'thisYear', 'custom')),
+  modified_from TEXT,
+  modified_to TEXT,
+  sort_field TEXT NOT NULL CHECK (sort_field IN ('relevance', 'title', 'folder', 'status', 'favorite', 'created_at', 'updated_at')),
+  sort_direction TEXT NOT NULL CHECK (sort_direction IN ('asc', 'desc')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (
+    (created_period = 'custom' AND (created_from IS NOT NULL OR created_to IS NOT NULL)) OR
+    (created_period <> 'custom' AND created_from IS NULL AND created_to IS NULL)
+  ),
+  CHECK (
+    (modified_period = 'custom' AND (modified_from IS NOT NULL OR modified_to IS NOT NULL)) OR
+    (modified_period <> 'custom' AND modified_from IS NULL AND modified_to IS NULL)
+  ),
+  CHECK (query_text = '' OR search_title = 1 OR search_content = 1 OR search_notes = 1),
+  CHECK (query_text <> '' OR sort_field <> 'relevance')
+);
+
+CREATE TABLE IF NOT EXISTS saved_search_folders (
+  saved_search_id INTEGER NOT NULL,
+  folder_id INTEGER NOT NULL,
+  PRIMARY KEY (saved_search_id, folder_id)
+);
+
+CREATE TABLE IF NOT EXISTS saved_search_statuses (
+  saved_search_id INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('draft', 'active', 'to_review', 'final', 'archived')),
+  PRIMARY KEY (saved_search_id, status)
+);
+`;
+
 const currentSchema = `
 CREATE TABLE IF NOT EXISTS documents (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -388,7 +562,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_special_role_unique
 ON documents(special_role)
 WHERE special_role IS NOT NULL;
 
-${fullTextSchema}`;
+${fullTextSchema}
+${savedSearchSchema}`;
 
 interface SchemaMigration {
   version: number;
@@ -428,6 +603,13 @@ const legacyDocumentColumns = [
   'notes',
 ];
 const currentFolderColumns = ['id', 'name', 'parent_id', 'position', 'created_at', 'updated_at'];
+const savedSearchColumns = [
+  'id', 'name', 'query_text', 'search_title', 'search_content', 'search_notes', 'match_mode',
+  'include_unclassified', 'favorite_only', 'created_period', 'created_from', 'created_to',
+  'modified_period', 'modified_from', 'modified_to', 'sort_field', 'sort_direction', 'created_at', 'updated_at',
+];
+const savedSearchFolderColumns = ['saved_search_id', 'folder_id'];
+const savedSearchStatusColumns = ['saved_search_id', 'status'];
 
 function hasExactColumns(db: Database.Database, tableName: string, expectedColumns: string[]): boolean {
   if (!tableExists(db, tableName)) {
@@ -458,6 +640,32 @@ function inferKnownTextothequeSchemaVersion(db: Database.Database): number | nul
   const documentColumnsV1 = [...legacyDocumentColumns, 'deleted_at'];
   const documentColumnsV2 = [...legacyDocumentColumns, 'deleted_at', 'folder_id'];
   const documentColumnsV3 = [...documentColumnsV2, 'special_role'];
+
+  if (
+    hasOnlyHistoricalTables(db, [
+      'documents',
+      'documents_fts',
+      'documents_fts_config',
+      'documents_fts_data',
+      'documents_fts_docsize',
+      'documents_fts_idx',
+      'folders',
+      'saved_search_folders',
+      'saved_search_statuses',
+      'saved_searches',
+    ]) &&
+    hasExactColumns(db, 'documents', documentColumnsV3) &&
+    hasExactColumns(db, 'folders', currentFolderColumns) &&
+    hasExactColumns(db, 'saved_searches', savedSearchColumns) &&
+    hasExactColumns(db, 'saved_search_folders', savedSearchFolderColumns) &&
+    hasExactColumns(db, 'saved_search_statuses', savedSearchStatusColumns) &&
+    indexExists(db, 'idx_documents_special_role_unique') &&
+    triggerExists(db, 'documents_fts_after_insert') &&
+    triggerExists(db, 'documents_fts_after_delete') &&
+    triggerExists(db, 'documents_fts_after_text_update')
+  ) {
+    return 5;
+  }
 
   if (
     hasOnlyHistoricalTables(db, [
@@ -740,6 +948,13 @@ const schemaMigrations: SchemaMigration[] = [
       db.prepare(`INSERT INTO documents_fts(documents_fts, rank) VALUES ('integrity-check', 1)`).run();
     },
   },
+  {
+    version: 5,
+    name: 'add persistent saved searches',
+    migrate: (db) => {
+      db.exec(savedSearchSchema);
+    },
+  },
 ];
 
 export class TextothequeDatabase {
@@ -846,6 +1061,13 @@ export class TextothequeDatabase {
       triggerExists(this.db, 'documents_fts_after_delete') &&
       triggerExists(this.db, 'documents_fts_after_text_update')
     ) {
+      if (
+        tableExists(this.db, 'saved_searches') &&
+        tableExists(this.db, 'saved_search_folders') &&
+        tableExists(this.db, 'saved_search_statuses')
+      ) {
+        return 5;
+      }
       return 4;
     }
 
@@ -910,6 +1132,15 @@ export class TextothequeDatabase {
     if (version >= 4 && !triggerExists(this.db, 'documents_fts_after_text_update')) {
       missingStructures.push('documents_fts_after_text_update');
     }
+    if (version >= 5 && !tableExists(this.db, 'saved_searches')) {
+      missingStructures.push('saved_searches');
+    }
+    if (version >= 5 && !tableExists(this.db, 'saved_search_folders')) {
+      missingStructures.push('saved_search_folders');
+    }
+    if (version >= 5 && !tableExists(this.db, 'saved_search_statuses')) {
+      missingStructures.push('saved_search_statuses');
+    }
 
     if (missingStructures.length > 0) {
       throw new Error(
@@ -941,6 +1172,9 @@ export class TextothequeDatabase {
       'documents_fts_after_text_update',
     ]) {
       if (!triggerExists(this.db, triggerName)) missingStructures.push(triggerName);
+    }
+    for (const tableName of ['saved_searches', 'saved_search_folders', 'saved_search_statuses']) {
+      if (!tableExists(this.db, tableName)) missingStructures.push(tableName);
     }
 
     if (missingStructures.length > 0) {
@@ -1015,6 +1249,138 @@ export class TextothequeDatabase {
          ORDER BY updated_at DESC, id DESC`
       )
       .all() as TextDocument[];
+  }
+
+  listSavedSearches(): SavedSearchSummary[] {
+    return this.db.prepare(
+      `SELECT id, name, updated_at AS updatedAt
+       FROM saved_searches
+       ORDER BY name COLLATE NOCASE ASC, name ASC, id ASC`
+    ).all() as SavedSearchSummary[];
+  }
+
+  getSavedSearch(id: number): SavedSearchDefinition | null {
+    if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Identifiant de recherche enregistrée invalide.');
+    const row = this.db.prepare(`SELECT * FROM saved_searches WHERE id = ?`).get(id) as SavedSearchRow | undefined;
+    if (!row) return null;
+    const folderIds = (this.db.prepare(
+      `SELECT folder_id AS folderId FROM saved_search_folders WHERE saved_search_id = ? ORDER BY folder_id ASC`
+    ).all(id) as Array<{ folderId: number }>).map(({ folderId }) => folderId);
+    const statuses = (this.db.prepare(
+      `SELECT status FROM saved_search_statuses
+       WHERE saved_search_id = ?
+       ORDER BY CASE status WHEN 'draft' THEN 1 WHEN 'active' THEN 2 WHEN 'to_review' THEN 3 WHEN 'final' THEN 4 ELSE 5 END`
+    ).all(id) as Array<{ status: DocumentStatus }>).map(({ status }) => status);
+    return savedSearchDefinition(row, folderIds, statuses);
+  }
+
+  private savedSearchParameters(input: SavedSearchInput, now: string): Record<string, string | number | null> {
+    return {
+      name: input.name,
+      queryText: input.query,
+      searchTitle: input.fields.includes('title') ? 1 : 0,
+      searchContent: input.fields.includes('content') ? 1 : 0,
+      searchNotes: input.fields.includes('notes') ? 1 : 0,
+      matchMode: input.matchMode,
+      includeUnclassified: input.folderSelection.includeUnclassified ? 1 : 0,
+      favoriteOnly: input.favoriteOnly ? 1 : 0,
+      createdPeriod: input.created.period,
+      createdFrom: input.created.from,
+      createdTo: input.created.to,
+      modifiedPeriod: input.modified.period,
+      modifiedFrom: input.modified.from,
+      modifiedTo: input.modified.to,
+      sortField: input.sortBy,
+      sortDirection: input.direction,
+      now,
+    };
+  }
+
+  private replaceSavedSearchRelations(id: number, input: SavedSearchInput): void {
+    for (const folderId of input.folderSelection.folderIds) {
+      this.assertFolderExists(folderId, 'Enregistrement de la recherche');
+    }
+    this.db.prepare(`DELETE FROM saved_search_folders WHERE saved_search_id = ?`).run(id);
+    this.db.prepare(`DELETE FROM saved_search_statuses WHERE saved_search_id = ?`).run(id);
+    const insertFolder = this.db.prepare(
+      `INSERT INTO saved_search_folders (saved_search_id, folder_id) VALUES (?, ?)`
+    );
+    for (const folderId of input.folderSelection.folderIds) insertFolder.run(id, folderId);
+    const insertStatus = this.db.prepare(
+      `INSERT INTO saved_search_statuses (saved_search_id, status) VALUES (?, ?)`
+    );
+    for (const status of input.statuses) insertStatus.run(id, status);
+  }
+
+  createSavedSearch(input: SavedSearchInput): SavedSearchDefinition {
+    const normalized = normalizeSavedSearchInput(input);
+    const create = this.db.transaction(() => {
+      for (const folderId of normalized.folderSelection.folderIds) {
+        this.assertFolderExists(folderId, 'Enregistrement de la recherche');
+      }
+      const now = nowIso();
+      const result = this.db.prepare(
+        `INSERT INTO saved_searches (
+           name, query_text, search_title, search_content, search_notes, match_mode,
+           include_unclassified, favorite_only, created_period, created_from, created_to,
+           modified_period, modified_from, modified_to, sort_field, sort_direction, created_at, updated_at
+         ) VALUES (
+           @name, @queryText, @searchTitle, @searchContent, @searchNotes, @matchMode,
+           @includeUnclassified, @favoriteOnly, @createdPeriod, @createdFrom, @createdTo,
+           @modifiedPeriod, @modifiedFrom, @modifiedTo, @sortField, @sortDirection, @now, @now
+         )`
+      ).run(this.savedSearchParameters(normalized, now));
+      const id = Number(result.lastInsertRowid);
+      this.replaceSavedSearchRelations(id, normalized);
+      return id;
+    });
+    const created = this.getSavedSearch(create());
+    if (!created) throw new Error('La recherche enregistrée créée est introuvable.');
+    return created;
+  }
+
+  updateSavedSearch(id: number, criteria: SearchDocumentsOptions): SavedSearchDefinition {
+    const current = this.getSavedSearch(id);
+    if (!current) throw new Error('La recherche enregistrée est introuvable.');
+    const normalized = normalizeSavedSearchInput({ ...criteria, name: current.name });
+    const update = this.db.transaction(() => {
+      const now = nowIso();
+      this.db.prepare(
+        `UPDATE saved_searches SET
+           query_text = @queryText, search_title = @searchTitle, search_content = @searchContent,
+           search_notes = @searchNotes, match_mode = @matchMode,
+           include_unclassified = @includeUnclassified, favorite_only = @favoriteOnly,
+           created_period = @createdPeriod, created_from = @createdFrom, created_to = @createdTo,
+           modified_period = @modifiedPeriod, modified_from = @modifiedFrom, modified_to = @modifiedTo,
+           sort_field = @sortField, sort_direction = @sortDirection, updated_at = @now
+         WHERE id = @id`
+      ).run({ ...this.savedSearchParameters(normalized, now), id });
+      this.replaceSavedSearchRelations(id, normalized);
+    });
+    update();
+    return this.getSavedSearch(id)!;
+  }
+
+  renameSavedSearch(id: number, name: string): SavedSearchDefinition {
+    const current = this.getSavedSearch(id);
+    if (!current) throw new Error('La recherche enregistrée est introuvable.');
+    const normalized = normalizeSavedSearchInput({ ...current, name });
+    this.db.prepare(`UPDATE saved_searches SET name = ?, updated_at = ? WHERE id = ?`).run(
+      normalized.name,
+      nowIso(),
+      id
+    );
+    return this.getSavedSearch(id)!;
+  }
+
+  deleteSavedSearch(id: number): void {
+    if (!this.getSavedSearch(id)) throw new Error('La recherche enregistrée est introuvable.');
+    const remove = this.db.transaction(() => {
+      this.db.prepare(`DELETE FROM saved_search_folders WHERE saved_search_id = ?`).run(id);
+      this.db.prepare(`DELETE FROM saved_search_statuses WHERE saved_search_id = ?`).run(id);
+      this.db.prepare(`DELETE FROM saved_searches WHERE id = ?`).run(id);
+    });
+    remove();
   }
 
   listDocumentCatalog(options: DocumentCatalogOptions): CatalogDocument[] {

@@ -40,7 +40,16 @@ import {
 import { exportTextDocument, setDocumentExportAvailable } from './services/text-export';
 import { listDocumentCatalog } from './services/catalog';
 import { searchDocuments } from './services/search';
-import type { CatalogDocument, CatalogSortField, DocumentCatalogOptions } from './types/catalog';
+import {
+  createSavedSearch,
+  deleteSavedSearch,
+  getSavedSearch,
+  listSavedSearches,
+  renameSavedSearch,
+  setSearchMenuState,
+  updateSavedSearch,
+} from './services/saved-searches';
+import type { CatalogDocument, CatalogSortDirection, CatalogSortField, DocumentCatalogOptions } from './types/catalog';
 import type { DocumentInput, DocumentStatus, Folder, TextDocument } from './types/document';
 import type { LibraryInfo, LibraryInspection, LibraryMenuAction, LibraryOpenResult } from './types/library';
 import type { TextExportDraft } from './types/text-export';
@@ -52,7 +61,9 @@ import type {
   SearchMatchMode,
   SearchSortField,
   SearchTextField,
+  SearchDocumentsOptions,
 } from './types/search';
+import type { SavedSearchDefinition, SavedSearchSummary, SearchMenuAction } from './types/saved-search';
 
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 type LibraryBackupState = 'idle' | 'saving' | 'success';
@@ -104,6 +115,46 @@ interface ConfirmDialogState {
   danger?: boolean;
   focusAfterCancel?: boolean;
   resolve: (confirmed: boolean) => void;
+}
+
+interface SavedSearchNameDialogState {
+  mode: 'save-as' | 'rename';
+  title: string;
+  confirmLabel: string;
+  value: string;
+  submitting: boolean;
+}
+
+const SEARCH_FIELD_ORDER: SearchTextField[] = ['title', 'content', 'notes'];
+const SEARCH_STATUS_ORDER: DocumentStatus[] = ['draft', 'active', 'to_review', 'final', 'archived'];
+
+function normalizeSearchCriteria(criteria: SearchDocumentsOptions): SearchDocumentsOptions {
+  const normalizeDate = (filter: SearchDateFilter): SearchDateFilter => filter.period === 'custom'
+    ? { ...filter }
+    : { period: filter.period, from: null, to: null };
+  return {
+    query: criteria.query.trim(),
+    fields: SEARCH_FIELD_ORDER.filter((field) => criteria.fields.includes(field)),
+    matchMode: criteria.matchMode,
+    folderSelection: {
+      folderIds: [...new Set(criteria.folderSelection.folderIds)].sort((left, right) => left - right),
+      includeUnclassified: criteria.folderSelection.includeUnclassified,
+    },
+    statuses: SEARCH_STATUS_ORDER.filter((status) => criteria.statuses.includes(status)),
+    favoriteOnly: criteria.favoriteOnly,
+    created: normalizeDate(criteria.created),
+    modified: normalizeDate(criteria.modified),
+    sortBy: criteria.sortBy,
+    direction: criteria.direction,
+  };
+}
+
+function criteriaFromSavedSearch(definition: SavedSearchDefinition): SearchDocumentsOptions {
+  return normalizeSearchCriteria(definition);
+}
+
+function searchCriteriaSignature(criteria: SearchDocumentsOptions): string {
+  return JSON.stringify(normalizeSearchCriteria(criteria));
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -191,6 +242,11 @@ export default function App() {
   const [libraryNotice, setLibraryNotice] = useState<string | null>(null);
   const [paneLayout, setPaneLayout] = useState<PaneLayout>(() => loadPaneLayout());
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+  const [savedSearchNameDialog, setSavedSearchNameDialog] = useState<SavedSearchNameDialogState | null>(null);
+  const [savedSearches, setSavedSearches] = useState<SavedSearchSummary[]>([]);
+  const [activeSavedSearchId, setActiveSavedSearchId] = useState<number | null>(null);
+  const [activeSavedSearchName, setActiveSavedSearchName] = useState<string | null>(null);
+  const [savedSearchBaseline, setSavedSearchBaseline] = useState<SearchDocumentsOptions | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchFields, setSearchFields] = useState<SearchTextField[]>(['title', 'content', 'notes']);
   const [searchMatchMode, setSearchMatchMode] = useState<SearchMatchMode>('all');
@@ -221,6 +277,7 @@ export default function App() {
   const restoreHiddenNavigationAfterSearchRef = useRef(false);
   const catalogRequestRef = useRef(0);
   const searchRequestRef = useRef(0);
+  const activeLibraryPathRef = useRef<string | null>(null);
 
   useEffect(() => {
     void refreshDocuments().catch((loadError: unknown) => {
@@ -300,6 +357,35 @@ export default function App() {
     isDateFilterActive(createdFilter) ||
     isDateFilterActive(modifiedFilter);
   const hasActiveSearchCriteria = Boolean(searchQuery.trim() || hasStructuredSearchFilters);
+  const currentSearchCriteria = useMemo<SearchDocumentsOptions>(() => normalizeSearchCriteria({
+    query: searchQuery,
+    fields: searchFields,
+    matchMode: searchMatchMode,
+    folderSelection: searchFolderSelection,
+    statuses: searchStatuses,
+    favoriteOnly: searchFavoriteOnly,
+    created: createdFilter,
+    modified: modifiedFilter,
+    sortBy: searchSortBy,
+    direction: searchDirection,
+  }), [
+    createdFilter,
+    modifiedFilter,
+    searchDirection,
+    searchFavoriteOnly,
+    searchFields,
+    searchFolderSelection,
+    searchMatchMode,
+    searchQuery,
+    searchSortBy,
+    searchStatuses,
+  ]);
+  const savedSearchModified = activeSavedSearchId !== null && savedSearchBaseline !== null &&
+    searchCriteriaSignature(currentSearchCriteria) !== searchCriteriaSignature(savedSearchBaseline);
+  const savedSearchCanSave = !validateDateRange(createdFilter) && !validateDateRange(modifiedFilter) &&
+    (!searchQuery.trim() || searchFields.length > 0) && (searchQuery.trim().length > 0 || searchSortBy !== 'relevance') &&
+    (createdFilter.period !== 'custom' || Boolean(createdFilter.from || createdFilter.to)) &&
+    (modifiedFilter.period !== 'custom' || Boolean(modifiedFilter.from || modifiedFilter.to));
   const isDirty = Boolean(
     selectedDocument &&
       (title !== titleForEditing(selectedDocument.title) ||
@@ -340,6 +426,33 @@ export default function App() {
   useEffect(() => {
     window.localStorage.setItem(PANE_LAYOUT_STORAGE_KEY, JSON.stringify(paneLayout));
   }, [paneLayout]);
+
+  useEffect(() => {
+    const libraryPath = libraryInfo?.path ?? null;
+    activeLibraryPathRef.current = libraryPath;
+    setActiveSavedSearchId(null);
+    setActiveSavedSearchName(null);
+    setSavedSearchBaseline(null);
+    if (!libraryPath) {
+      setSavedSearches([]);
+      return;
+    }
+    void listSavedSearches().then((items) => {
+      if (activeLibraryPathRef.current === libraryPath) setSavedSearches(items);
+    }).catch((loadError: unknown) => {
+      if (activeLibraryPathRef.current === libraryPath) {
+        showOperationError('list-saved-searches', loadError, 'Impossible de charger les recherches enregistrées.');
+      }
+    });
+  }, [libraryInfo?.path]);
+
+  useEffect(() => {
+    void setSearchMenuState({
+      activeSavedSearchId,
+      modified: savedSearchModified,
+      canSave: savedSearchCanSave,
+    }).catch((menuError: unknown) => logRendererError('set-search-menu-state', menuError));
+  }, [activeSavedSearchId, savedSearchCanSave, savedSearchModified]);
 
   useEffect(() => {
     if (!searchResultsVisible) return;
@@ -650,6 +763,7 @@ export default function App() {
   }
 
   async function handleChangeDocumentView(nextView: DocumentView, nextFolderId: number | null = null) {
+    clearSavedSearchAssociation();
     if (nextView === 'all') {
       if (catalogVisible && documentView === 'all') return;
       hideSearchResults();
@@ -1005,6 +1119,9 @@ export default function App() {
     setSearchLoading(false);
     setSearchValidationMessage(null);
     setAdvancedSearchExpanded(false);
+    clearSavedSearchAssociation();
+    setSavedSearches([]);
+    setSavedSearchNameDialog(null);
     setDeletedDocuments([]);
     setFolders([]);
     setDocumentView('navigation');
@@ -1175,6 +1292,16 @@ export default function App() {
     if (snapshot) void handleExportTextDocument({ ...snapshot });
   }));
 
+  useEffect(() => window.textotheque.onSearchMenuAction((menuAction: SearchMenuAction) => {
+    if (menuAction.action === 'focus') focusSearch();
+    if (menuAction.action === 'advanced') showAdvancedSearch();
+    if (menuAction.action === 'save-as') showSaveSavedSearchDialog();
+    if (menuAction.action === 'update') void handleUpdateSavedSearch();
+    if (menuAction.action === 'rename') showRenameSavedSearchDialog();
+    if (menuAction.action === 'delete') void handleDeleteSavedSearch();
+    if (menuAction.action === 'open') void handleOpenSavedSearch(menuAction.id);
+  }));
+
   async function handleTrashCurrentDocument() {
     if (!selectedDocument || selectedDocumentIsDeleted) {
       return;
@@ -1261,6 +1388,7 @@ export default function App() {
   }
 
   function clearSearchAndReturnToNavigation() {
+    clearSavedSearchAssociation();
     searchRequestRef.current += 1;
     setSearchQuery('');
     setSearchFolderSelection({ folderIds: [], includeUnclassified: false });
@@ -1310,6 +1438,163 @@ export default function App() {
     if (searchQuery.trim()) return;
     setSearchSortBy(naturalStructuredSort(created, modified));
     setSearchDirection('desc');
+  }
+
+  function clearSavedSearchAssociation(): void {
+    setActiveSavedSearchId(null);
+    setActiveSavedSearchName(null);
+    setSavedSearchBaseline(null);
+  }
+
+  async function refreshSavedSearchList(expectedLibraryPath: string): Promise<void> {
+    const items = await listSavedSearches();
+    if (activeLibraryPathRef.current === expectedLibraryPath) setSavedSearches(items);
+  }
+
+  function applySavedSearchDefinition(definition: SavedSearchDefinition): void {
+    const criteria = criteriaFromSavedSearch(definition);
+    searchRequestRef.current += 1;
+    setSearchQuery(criteria.query);
+    setSearchFields(criteria.fields);
+    setSearchMatchMode(criteria.matchMode);
+    setSearchFolderSelection(criteria.folderSelection);
+    setSearchStatuses(criteria.statuses);
+    setSearchFavoriteOnly(criteria.favoriteOnly);
+    setCreatedFilter(criteria.created);
+    setModifiedFilter(criteria.modified);
+    setSearchSortBy(criteria.sortBy);
+    setSearchDirection(criteria.direction);
+    setSearchValidationMessage(null);
+    setSearchResultsVisible(true);
+    setAdvancedSearchExpanded(true);
+    setCatalogVisible(false);
+    setActiveSavedSearchId(definition.id);
+    setActiveSavedSearchName(definition.name);
+    setSavedSearchBaseline(criteria);
+  }
+
+  async function handleOpenSavedSearch(id: number): Promise<void> {
+    const expectedLibraryPath = activeLibraryPathRef.current;
+    if (!expectedLibraryPath) return;
+    try {
+      const definition = await getSavedSearch(id);
+      if (activeLibraryPathRef.current !== expectedLibraryPath) return;
+      if (!definition) {
+        setError('Cette recherche enregistrée est introuvable.');
+        await refreshSavedSearchList(expectedLibraryPath);
+        return;
+      }
+      setError(null);
+      applySavedSearchDefinition(definition);
+    } catch (loadError: unknown) {
+      if (activeLibraryPathRef.current === expectedLibraryPath) {
+        showOperationError('open-saved-search', loadError, 'Impossible de charger cette recherche enregistrée.');
+      }
+    }
+  }
+
+  function showSaveSavedSearchDialog(): void {
+    if (!savedSearchCanSave) {
+      setError('Corrigez les critères de recherche avant de les enregistrer.');
+      return;
+    }
+    setSavedSearchNameDialog({
+      mode: 'save-as',
+      title: activeSavedSearchId === null ? 'Enregistrer la recherche' : 'Enregistrer la recherche sous',
+      confirmLabel: 'Enregistrer',
+      value: activeSavedSearchId === null ? '' : `${activeSavedSearchName ?? 'Recherche'} — copie`,
+      submitting: false,
+    });
+  }
+
+  function showRenameSavedSearchDialog(): void {
+    if (activeSavedSearchId === null || !activeSavedSearchName) return;
+    setSavedSearchNameDialog({
+      mode: 'rename',
+      title: 'Renommer la recherche',
+      confirmLabel: 'Renommer',
+      value: activeSavedSearchName,
+      submitting: false,
+    });
+  }
+
+  async function submitSavedSearchNameDialog(): Promise<void> {
+    const dialog = savedSearchNameDialog;
+    const expectedLibraryPath = activeLibraryPathRef.current;
+    const name = dialog?.value.trim() ?? '';
+    if (!dialog || !expectedLibraryPath || dialog.submitting) return;
+    if (name.length < 1 || name.length > 120) {
+      setError('Le nom de la recherche doit contenir entre 1 et 120 caractères.');
+      return;
+    }
+    setSavedSearchNameDialog({ ...dialog, submitting: true });
+    try {
+      const definition = dialog.mode === 'save-as'
+        ? await createSavedSearch({ ...currentSearchCriteria, name }, expectedLibraryPath)
+        : activeSavedSearchId === null
+          ? null
+          : await renameSavedSearch(activeSavedSearchId, name, expectedLibraryPath);
+      if (activeLibraryPathRef.current !== expectedLibraryPath || !definition) return;
+      await refreshSavedSearchList(expectedLibraryPath);
+      setActiveSavedSearchId(definition.id);
+      setActiveSavedSearchName(definition.name);
+      setSavedSearchBaseline(criteriaFromSavedSearch(definition));
+      setSavedSearchNameDialog(null);
+      setError(null);
+    } catch (saveError: unknown) {
+      if (activeLibraryPathRef.current === expectedLibraryPath) {
+        setSavedSearchNameDialog((current) => current ? { ...current, submitting: false } : null);
+        showOperationError(
+          dialog.mode === 'save-as' ? 'create-saved-search' : 'rename-saved-search',
+          saveError,
+          dialog.mode === 'save-as'
+            ? 'Impossible d’enregistrer cette recherche. Vérifiez que son nom est unique.'
+            : 'Impossible de renommer cette recherche. Vérifiez que son nom est unique.'
+        );
+      }
+    }
+  }
+
+  async function handleUpdateSavedSearch(): Promise<void> {
+    const id = activeSavedSearchId;
+    const expectedLibraryPath = activeLibraryPathRef.current;
+    if (id === null || !expectedLibraryPath || !savedSearchModified || !savedSearchCanSave) return;
+    try {
+      const definition = await updateSavedSearch(id, currentSearchCriteria, expectedLibraryPath);
+      if (activeLibraryPathRef.current !== expectedLibraryPath) return;
+      await refreshSavedSearchList(expectedLibraryPath);
+      setActiveSavedSearchName(definition.name);
+      setSavedSearchBaseline(criteriaFromSavedSearch(definition));
+      setError(null);
+    } catch (updateError: unknown) {
+      if (activeLibraryPathRef.current === expectedLibraryPath) {
+        showOperationError('update-saved-search', updateError, 'Impossible de mettre à jour cette recherche enregistrée.');
+      }
+    }
+  }
+
+  async function handleDeleteSavedSearch(): Promise<void> {
+    const id = activeSavedSearchId;
+    const name = activeSavedSearchName;
+    const expectedLibraryPath = activeLibraryPathRef.current;
+    if (id === null || !name || !expectedLibraryPath) return;
+    if (!(await confirmAction({
+      title: 'Supprimer la recherche enregistrée',
+      message: `Supprimer la recherche enregistrée « ${name} » ?`,
+      confirmLabel: 'Supprimer',
+      danger: true,
+    }))) return;
+    try {
+      await deleteSavedSearch(id, expectedLibraryPath);
+      if (activeLibraryPathRef.current !== expectedLibraryPath) return;
+      await refreshSavedSearchList(expectedLibraryPath);
+      clearSavedSearchAssociation();
+      setError(null);
+    } catch (deleteError: unknown) {
+      if (activeLibraryPathRef.current === expectedLibraryPath) {
+        showOperationError('delete-saved-search', deleteError, 'Impossible de supprimer cette recherche enregistrée.');
+      }
+    }
   }
 
   function handleSearchChange(value: string) {
@@ -1424,6 +1709,7 @@ export default function App() {
   }
 
   function resetSearchCriteria(): void {
+    clearSavedSearchAssociation();
     searchRequestRef.current += 1;
     setSearchQuery('');
     setSearchFields(['title', 'content', 'notes']);
@@ -1469,16 +1755,16 @@ export default function App() {
         return;
       }
 
-      if (usesCtrl && key === 'f') {
-        event.preventDefault();
-        focusSearch();
-        return;
-      }
-
       if (event.key === 'Escape') {
         if (confirmDialog) {
           event.preventDefault();
           resolveConfirmation(false);
+          return;
+        }
+
+        if (savedSearchNameDialog) {
+          event.preventDefault();
+          setSavedSearchNameDialog(null);
           return;
         }
 
@@ -1596,6 +1882,10 @@ export default function App() {
           title={searchResultsVisible ? 'Résultats de recherche' : 'Tous les textes'}
           eyebrow={searchResultsVisible ? 'Recherche' : 'Bibliothèque'}
           folders={folders}
+          activeSavedSearchName={activeSavedSearchName}
+          activeSavedSearchId={activeSavedSearchId}
+          savedSearchModified={savedSearchModified}
+          savedSearches={savedSearches}
           searchControls={{
             expanded: advancedSearchExpanded,
             fields: searchFields,
@@ -1624,6 +1914,11 @@ export default function App() {
           onToggleNavigation={toggleNavigationPane}
           onToggleMetadata={toggleMetadataPane}
           onOpenTodo={handleOpenTodo}
+          onSaveSearchAs={showSaveSavedSearchDialog}
+          onUpdateSavedSearch={() => { void handleUpdateSavedSearch(); }}
+          onRenameSavedSearch={showRenameSavedSearchDialog}
+          onDeleteSavedSearch={() => { void handleDeleteSavedSearch(); }}
+          onOpenSavedSearch={(id) => { void handleOpenSavedSearch(id); }}
         /> : <EditorPane
           document={selectedDocument}
           title={title}
@@ -1724,6 +2019,34 @@ export default function App() {
               </button>
             </div>
           </section>
+        </div>
+      ) : null}
+      {savedSearchNameDialog ? (
+        <div className="confirm-backdrop" role="presentation">
+          <form
+            className="confirm-dialog saved-search-name-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="saved-search-name-title"
+            onSubmit={(event) => { event.preventDefault(); void submitSavedSearchNameDialog(); }}
+          >
+            <h2 id="saved-search-name-title">{savedSearchNameDialog.title}</h2>
+            <label>
+              Nom
+              <input
+                autoFocus
+                maxLength={120}
+                value={savedSearchNameDialog.value}
+                onChange={(event) => setSavedSearchNameDialog((current) => current ? { ...current, value: event.target.value } : null)}
+              />
+            </label>
+            <div className="confirm-actions">
+              <button className="secondary-button" type="button" onClick={() => setSavedSearchNameDialog(null)}>Annuler</button>
+              <button className="primary-button" type="submit" disabled={savedSearchNameDialog.submitting || !savedSearchNameDialog.value.trim()}>
+                {savedSearchNameDialog.confirmLabel}
+              </button>
+            </div>
+          </form>
         </div>
       ) : null}
     </div>

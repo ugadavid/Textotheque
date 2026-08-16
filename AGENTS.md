@@ -209,10 +209,12 @@ PRAGMA user_version
 Le schéma courant est actuellement :
 
 ```text
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 ```
 
 La version de schéma est indépendante de la version applicative.
+
+Les recherches enregistrées appartiennent à chaque bibliothèque SQLite. Elles sont stockées comme critères structurés dans `saved_searches`, `saved_search_folders` et `saved_search_statuses`. Elles ne persistent ni SQL/FTS brut, ni résultats, ni descendants développés, ni bornes UTC calculées pour les périodes relatives.
 
 ---
 
@@ -849,6 +851,7 @@ npm.cmd run test:auto-title
 npm.cmd run test:special-todo
 npm.cmd run test:catalog
 npm.cmd run test:search
+npm.cmd run test:saved-searches
 ```
 
 ### Rôle des principaux tests
@@ -926,12 +929,19 @@ npm.cmd run test:search
 
 `test:search`
 
-- migration 3 vers 4 et reconstruction initiale FTS5 ;
+- migration 3 vers le schéma courant et reconstruction initiale FTS5 ;
 - synchronisation external-content et vérification d’intégrité ;
 - CI_AI fixe, zones, modes de correspondance et caractères spéciaux ;
 - filtres structurés SQL inclusifs sur branches de dossiers, statuts multiples, favoris, création et modification ;
 - périodes civiles locales, plages personnalisées, recherche sans texte et texte + filtres ;
 - snippets légers, corbeille, TODO et backup.
+
+`test:saved-searches`
+
+- migration 4 vers 5 sans perte des documents, du TODO ou de FTS5 ;
+- CRUD transactionnel et validation des relations ;
+- round-trip des critères structurés et périodes relatives dynamiques ;
+- indépendance des bibliothèques, backup et menu natif Recherche.
 
 ---
 
@@ -1102,6 +1112,7 @@ Fonctionnalités présentes notamment :
 - recherche plein texte FTS5 CI_AI avec zones et modes explicites ;
 - filtres structurés inclusifs sur branches de dossiers, statuts multiples, favoris et dates de création/modification ;
 - résultats dans le catalogue central avec pertinence et snippets ;
+- recherches enregistrées persistantes propres à chaque bibliothèque ;
 - barre de statut ;
 - raccourcis clavier ;
 - corbeille / restauration / vidage ;
@@ -1167,6 +1178,12 @@ Ctrl+Shift+T → ouvrir le TODO de la bibliothèque active
 Escape → annulation / sortie recherche selon contexte
 F2 → focus titre
 ```
+
+Le menu natif `Recherche` est l'unique propriétaire de `Ctrl+F`. Il transmet des intentions au renderer, comme les autres actions de recherche, sans manipuler directement SQLite.
+
+### Navigation structurelle
+
+Le panneau gauche représente prioritairement la structure documentaire de la bibliothèque : dossiers, documents et accès structurels comme `Tous les textes` ou `Corbeille`. Ne pas y ajouter automatiquement des fonctionnalités applicatives qui ne représentent pas un emplacement ou une structure documentaire. Les outils comme les recherches enregistrées doivent vivre avec la fonctionnalité qu'ils configurent, tout en restant découvrables via les menus natifs lorsque cela est pertinent.
 
 Autres invariants :
 

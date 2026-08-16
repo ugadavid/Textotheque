@@ -72,11 +72,15 @@ let libraryOpenInvocations = 0;
 let specialDocumentInvocations = 0;
 const catalogRequests = [];
 const searchRequests = [];
+const savedSearchWrites = [];
+let savedSearches = [];
+let nextSavedSearchId = 1;
+let latestSearchMenuState = null;
 let libraryInfo = {
   path: 'C:\\temporary\\test-ui.sqlite',
   fileName: 'test-ui.sqlite',
   applicationId: 1413830735,
-  userVersion: 4,
+  userVersion: 5,
   isTextotheque: true,
 };
 const forcedFailureCounts = new Map();
@@ -121,7 +125,7 @@ app
       if (libraryInspectInvocations === 1) event.sender.send('library:menu-action', { action: 'known', path: candidatePath });
       return {
         status: 'compatible',
-        inspection: { path: candidatePath, fileName: path.basename(candidatePath), readable: true, applicationId: 1413830735, userVersion: 4, isTextotheque: true, compatibility: 'compatible' },
+        inspection: { path: candidatePath, fileName: path.basename(candidatePath), readable: true, applicationId: 1413830735, userVersion: 5, isTextotheque: true, compatibility: 'compatible' },
         library: null,
         backupPath: null,
       };
@@ -150,8 +154,64 @@ app
         folder_id: null,
       }];
       folders = [];
+      savedSearches = [{
+        id: 1,
+        name: 'Gaming B',
+        query: 'contenu',
+        fields: ['title', 'content', 'notes'],
+        matchMode: 'all',
+        folderSelection: { folderIds: [], includeUnclassified: false },
+        statuses: [],
+        favoriteOnly: false,
+        created: { period: 'all', from: null, to: null },
+        modified: { period: 'all', from: null, to: null },
+        sortBy: 'relevance',
+        direction: 'asc',
+        createdAt: '2026-08-16T00:00:00.000Z',
+        updatedAt: '2026-08-16T00:00:00.000Z',
+      }];
+      nextSavedSearchId = 2;
       return { status: 'opened', inspection: null, library: { ...libraryInfo }, backupPath: null };
     });
+    ipcMain.handle('saved-searches:list', () => savedSearches
+      .map(({ id, name, updatedAt }) => ({ id, name, updatedAt }))
+      .sort((left, right) => left.name.localeCompare(right.name)));
+    ipcMain.handle('saved-searches:get', (_event, id) => {
+      const found = savedSearches.find((item) => item.id === id);
+      return found ? JSON.parse(JSON.stringify(found)) : null;
+    });
+    ipcMain.handle('saved-searches:create', (_event, input, expectedLibraryPath) => {
+      if (expectedLibraryPath !== libraryInfo.path) throw new Error('contexte bibliotheque modifie');
+      if (savedSearches.some((item) => item.name === input.name.trim())) throw new Error('nom duplique');
+      const now = '2026-08-16T12:00:00.000Z';
+      const created = { id: nextSavedSearchId++, ...JSON.parse(JSON.stringify(input)), name: input.name.trim(), createdAt: now, updatedAt: now };
+      savedSearches.push(created);
+      savedSearchWrites.push({ action: 'create', libraryPath: expectedLibraryPath, id: created.id });
+      return JSON.parse(JSON.stringify(created));
+    });
+    ipcMain.handle('saved-searches:update', (_event, id, criteria, expectedLibraryPath) => {
+      if (expectedLibraryPath !== libraryInfo.path) throw new Error('contexte bibliotheque modifie');
+      const index = savedSearches.findIndex((item) => item.id === id);
+      if (index < 0) throw new Error('introuvable');
+      savedSearches[index] = { ...savedSearches[index], ...JSON.parse(JSON.stringify(criteria)), updatedAt: '2026-08-16T12:01:00.000Z' };
+      savedSearchWrites.push({ action: 'update', libraryPath: expectedLibraryPath, id });
+      return JSON.parse(JSON.stringify(savedSearches[index]));
+    });
+    ipcMain.handle('saved-searches:rename', (_event, id, name, expectedLibraryPath) => {
+      if (expectedLibraryPath !== libraryInfo.path) throw new Error('contexte bibliotheque modifie');
+      const found = savedSearches.find((item) => item.id === id);
+      if (!found) throw new Error('introuvable');
+      found.name = name.trim();
+      found.updatedAt = '2026-08-16T12:02:00.000Z';
+      savedSearchWrites.push({ action: 'rename', libraryPath: expectedLibraryPath, id });
+      return JSON.parse(JSON.stringify(found));
+    });
+    ipcMain.handle('saved-searches:delete', (_event, id, expectedLibraryPath) => {
+      if (expectedLibraryPath !== libraryInfo.path) throw new Error('contexte bibliotheque modifie');
+      savedSearches = savedSearches.filter((item) => item.id !== id);
+      savedSearchWrites.push({ action: 'delete', libraryPath: expectedLibraryPath, id });
+    });
+    ipcMain.handle('search:set-menu-state', (_event, state) => { latestSearchMenuState = { ...state }; });
     ipcMain.handle('documents:list', () => {
       rejectIfForced('documents:list');
       return documents.filter((document) => !document.deleted_at).map(cloneDocument);
@@ -503,6 +563,13 @@ app
           Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value);
           input.dispatchEvent(new Event('input', { bubbles: true }));
         };
+        const selectSavedSearch = (name) => {
+          const select = document.querySelector('.saved-search-select');
+          const option = Array.from(select?.options ?? []).find((item) => item.textContent.replace(/ \*$/, '') === name);
+          if (!select || !option) throw new Error('Recherche enregistrée introuvable dans le sélecteur: ' + name);
+          Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, option.value);
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+        };
 
         await waitFor(() => document.querySelectorAll('.document-item').length >= 2, 'documents loaded');
         await waitFor(() => document.querySelector('.status-bar')?.textContent.includes('2 documents'), 'status total documents');
@@ -527,12 +594,15 @@ app
         if (document.querySelector('.navigation-pane .search-input-row')) {
           throw new Error('search should not be rendered in the navigation pane');
         }
+        if (document.querySelector('.navigation-pane')?.textContent.includes('Recherches enregistrées') || document.querySelector('.navigation-pane .saved-search-select')) {
+          throw new Error('saved searches must not be rendered in structural navigation');
+        }
         if (!searchInput.closest('.editor-toolbar')) {
           throw new Error('search should be rendered in the editor toolbar');
         }
         const viewButtons = document.querySelectorAll('.nav-view-button');
         if (viewButtons.length !== 2) throw new Error('document view buttons missing');
-        if (expectedAppVersion !== '0.1.26') throw new Error('unexpected application version');
+        if (expectedAppVersion !== '0.1.27') throw new Error('unexpected application version');
         const initialExpandedState = JSON.parse(window.localStorage.getItem('textotheque:expanded-folders:v2') ?? '[]');
         if (initialExpandedState.length !== 0) throw new Error('folders should be closed by default');
         await waitFor(() => window.localStorage.getItem('textotheque:pane-layout:v2'), 'pane layout stored');
@@ -715,27 +785,28 @@ app
         const selectedTitleBeforeHiddenSearch = document.querySelector('.title-input')?.value;
         const selectedIdBeforeHiddenSearch = document.querySelector('.status-bar')?.textContent.match(/Document (\d+)/)?.[1] ?? null;
         const ctrlFResult = dispatchShortcut('f', { ctrlKey: true });
-        if (!ctrlFResult.defaultPrevented || ctrlFResult.dispatchResult !== false) {
-          throw new Error('Ctrl+F did not prevent native search');
+        if (ctrlFResult.defaultPrevented || ctrlFResult.dispatchResult === false) {
+          throw new Error('Le renderer ne doit plus posseder Ctrl+F');
         }
-        await waitFor(() => document.querySelector('.navigation-pane'), 'Ctrl+F reveals hidden navigation');
+        document.querySelector('.toggle-navigation-button').click();
+        await waitFor(() => document.querySelector('.navigation-pane'), 'navigation reopened for search intent simulation');
         if (document.querySelector('.metadata-pane')) {
           throw new Error('Ctrl+F should not reveal the metadata pane');
         }
-        await waitFor(() => document.activeElement === document.querySelector('.search-input-row input'), 'Ctrl+F focuses search');
+        document.querySelector('.search-input-row input').focus();
+        await waitFor(() => document.activeElement === document.querySelector('.search-input-row input'), 'search input focused');
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
           .set.call(document.querySelector('.search-input-row input'), 'ancien');
         document.querySelector('.search-input-row input').dispatchEvent(new Event('input', { bubbles: true }));
         await waitFor(() => document.querySelector('.search-input-row input').value === 'ancien', 'search text entered before escape');
         dispatchShortcut('Escape');
         await waitFor(() => document.querySelector('.search-input-row input').value === '', 'Escape clears focused search');
-        await waitFor(() => !document.querySelector('.navigation-pane'), 'Escape restores temporarily hidden navigation state');
+        await waitFor(() => document.querySelector('.navigation-pane'), 'renderer search keeps explicit navigation state');
         const selectedIdAfterHiddenSearch = document.querySelector('.status-bar')?.textContent.match(/Document (\d+)/)?.[1] ?? null;
         if (selectedIdAfterHiddenSearch !== selectedIdBeforeHiddenSearch ||
             (selectedTitleBeforeHiddenSearch !== undefined && document.querySelector('.title-input')?.value !== selectedTitleBeforeHiddenSearch)) {
           throw new Error('hidden navigation search changed the selected document');
         }
-        document.querySelector('.toggle-navigation-button').click();
         document.querySelector('.toggle-metadata-button').click();
         await waitFor(() => document.querySelector('.folder-section') && document.querySelector('.metadata-pane'), 'panels reopened after hidden search');
 
@@ -1151,7 +1222,7 @@ app
         document.querySelector('.empty-trash-button').click();
         await waitFor(() => document.querySelector('.confirm-dialog'), 'empty trash confirmation visible again');
         document.querySelector('.confirm-dialog .danger-button').click();
-        await waitFor(() => document.querySelector('.empty-state')?.textContent.includes('La corbeille est vide'), 'trash view empty after emptying');
+        await waitFor(() => Array.from(document.querySelectorAll('.empty-state')).some((item) => item.textContent.includes('La corbeille est vide')), 'trash view empty after emptying');
         if ((await window.textotheque.listDeletedDocuments()).length !== 0) {
           throw new Error('empty trash did not remove trashed documents');
         }
@@ -1199,6 +1270,70 @@ app
         document.querySelector('.primary-button').click();
         await waitFor(() => !document.querySelector('.title-dirty-marker'), 'new title saved');
 
+        document.querySelector('.advanced-search-button').click();
+        await waitFor(() => document.querySelector('.advanced-search-panel'), 'advanced search before saved search creation');
+        if (!document.querySelector('.saved-search-select') || document.querySelector('.saved-search-select').value !== '') {
+          throw new Error('saved search selector missing or not on its placeholder');
+        }
+        setSearch('premier');
+        await waitFor(() => document.querySelector('.catalog-row')?.textContent.includes('Premier document'), 'saved search source criteria applied');
+        Array.from(document.querySelectorAll('.saved-search-actions button')).find((button) => button.textContent.includes('Enregistrer la recherche')).click();
+        let nameDialog = await waitFor(() => document.querySelector('.saved-search-name-dialog'), 'saved search name dialog');
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(nameDialog.querySelector('input'), 'Recherche A');
+        nameDialog.querySelector('input').dispatchEvent(new Event('input', { bubbles: true }));
+        nameDialog.querySelector('.primary-button').click();
+        await waitFor(() => Array.from(document.querySelector('.saved-search-select').options).some((item) => item.textContent === 'Recherche A'), 'saved search added to selector');
+        await waitFor(() => document.querySelector('.saved-search-select').selectedOptions[0]?.textContent === 'Recherche A', 'new saved search selected');
+        await waitFor(() => document.querySelector('.active-saved-search-label')?.textContent.includes('Recherche A'), 'saved search active label');
+        if (document.querySelector('.active-saved-search-label').textContent.includes('modifiée')) {
+          throw new Error('new saved search should start on a clean baseline');
+        }
+
+        setSearch('deuxieme');
+        await waitFor(() => document.querySelector('.active-saved-search-label')?.textContent.includes('modifiée'), 'loaded saved search becomes modified');
+        await waitFor(() => document.querySelector('.saved-search-select').selectedOptions[0]?.textContent === 'Recherche A *', 'selector marks modified saved search');
+        const updateButton = Array.from(document.querySelectorAll('.saved-search-actions button')).find((button) => button.textContent === 'Mettre à jour');
+        if (updateButton.disabled) throw new Error('explicit saved search update should be enabled after modification');
+        updateButton.click();
+        await waitFor(() => !document.querySelector('.active-saved-search-label')?.textContent.includes('modifiée'), 'explicit update refreshes baseline');
+        await waitFor(() => document.querySelector('.saved-search-select').selectedOptions[0]?.textContent === 'Recherche A', 'selector clears modified marker after update');
+
+        Array.from(document.querySelectorAll('.saved-search-actions button')).find((button) => button.textContent.includes('Enregistrer sous')).click();
+        nameDialog = await waitFor(() => document.querySelector('.saved-search-name-dialog'), 'save-as name dialog');
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(nameDialog.querySelector('input'), 'Copie A');
+        nameDialog.querySelector('input').dispatchEvent(new Event('input', { bubbles: true }));
+        nameDialog.querySelector('.primary-button').click();
+        await waitFor(() => document.querySelector('.active-saved-search-label')?.textContent.includes('Copie A'), 'save-as activates copy');
+        await waitFor(() => document.querySelector('.saved-search-select').selectedOptions[0]?.textContent === 'Copie A', 'save-as selects copy immediately');
+        Array.from(document.querySelectorAll('.saved-search-actions button')).find((button) => button.textContent.includes('Renommer')).click();
+        nameDialog = await waitFor(() => document.querySelector('.saved-search-name-dialog'), 'rename saved search dialog');
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(nameDialog.querySelector('input'), 'Copie renommée');
+        nameDialog.querySelector('input').dispatchEvent(new Event('input', { bubbles: true }));
+        nameDialog.querySelector('.primary-button').click();
+        await waitFor(() => document.querySelector('.active-saved-search-label')?.textContent.includes('Copie renommée'), 'saved search renamed');
+        await waitFor(() => document.querySelector('.saved-search-select').selectedOptions[0]?.textContent === 'Copie renommée', 'renamed search refreshed in selector');
+
+        document.querySelector('.catalog-row').click();
+        await waitFor(() => document.querySelector('.content-editor'), 'open result from saved search');
+        document.querySelector('.advanced-search-button').click();
+        await waitFor(() => document.querySelector('.active-saved-search-label')?.textContent.includes('Copie renommée'), 'return to active saved search');
+        if (document.querySelector('.saved-search-select').selectedOptions[0]?.textContent !== 'Copie renommée') {
+          throw new Error('opening a result forgot the active saved search');
+        }
+        Array.from(document.querySelectorAll('.saved-search-actions button')).find((button) => button.textContent.includes('Supprimer')).click();
+        let deleteDialog = await waitFor(() => document.querySelector('.confirm-dialog'), 'saved search delete confirmation');
+        if (!deleteDialog.textContent.includes('Copie renommée')) throw new Error('saved search delete confirmation has wrong name');
+        deleteDialog.querySelector('.danger-button').click();
+        await waitFor(() => !document.querySelector('.active-saved-search-label'), 'deleted active search becomes unassociated');
+        await waitFor(() => document.querySelector('.saved-search-select').value === '', 'delete returns selector to placeholder');
+        await waitFor(() => document.querySelector('.catalog-row')?.textContent.includes('Deuxieme document'), 'deleting saved search keeps current criteria and results');
+        selectSavedSearch('Recherche A');
+        await waitFor(() => document.querySelector('.active-saved-search-label')?.textContent.includes('Recherche A'), 'saved search loaded from selector');
+        await waitFor(() => document.querySelector('.catalog-row')?.textContent.includes('Deuxieme document'), 'selector uses saved search criteria and results');
+        document.querySelector('.reset-search-button').click();
+        await waitFor(() => !document.querySelector('.active-saved-search-label'), 'reset leaves saved search association');
+        await waitFor(() => document.querySelector('.saved-search-select').value === '', 'reset returns selector to placeholder');
+
         document.querySelector('.toggle-metadata-button').click();
         await waitFor(() => !document.querySelector('.metadata-pane'), 'right pane hidden before reload');
         await waitFor(
@@ -1234,6 +1369,16 @@ app
         !searchRequests.some((request) => request.query === 'premier lent') ||
         !searchRequests.some((request) => request.query === 'deuxieme rapide')) {
       throw new Error(`Advanced search requests are incomplete or invalid: ${JSON.stringify(searchRequests)}`);
+    }
+    if (savedSearchWrites.filter((write) => write.action === 'create').length !== 2 ||
+        savedSearchWrites.filter((write) => write.action === 'update').length !== 1 ||
+        savedSearchWrites.filter((write) => write.action === 'rename').length !== 1 ||
+        savedSearchWrites.filter((write) => write.action === 'delete').length !== 1 ||
+        savedSearchWrites.some((write) => write.libraryPath !== 'C:\\temporary\\test-ui.sqlite')) {
+      throw new Error(`Saved search writes are incomplete or crossed a library: ${JSON.stringify(savedSearchWrites)}`);
+    }
+    if (!latestSearchMenuState || latestSearchMenuState.activeSavedSearchId !== null) {
+      throw new Error(`Search menu state did not follow reset: ${JSON.stringify(latestSearchMenuState)}`);
     }
     if (libraryBackupInvocations !== 1) {
       throw new Error(`Dirty backup should stop the menu workflow before a second IPC call, got ${libraryBackupInvocations}.`);
@@ -1498,15 +1643,23 @@ app
             document.querySelector('.advanced-search-button').click();
             await new Promise((resolve) => setTimeout(resolve, 50));
             const folderMenu = document.querySelector('.folder-filter-menu');
+            const savedSearchSelect = document.querySelector('.saved-search-select');
+            const savedSearchNames = Array.from(savedSearchSelect?.options ?? []).map((option) => option.textContent);
             return {
               ok: !document.querySelector('.title-input') &&
                 document.querySelector('.search-input-row input')?.value === '' &&
                 document.querySelector('.status-bar')?.textContent.includes('1 document') &&
                 !workspaceText.includes('Premier document') &&
+                !savedSearchNames.includes('Recherche A') &&
+                savedSearchNames.includes('Gaming B') &&
+                savedSearchSelect?.value === '' &&
+                !document.querySelector('.navigation-pane')?.textContent.includes('Gaming B') &&
+                !document.querySelector('.active-saved-search-label') &&
                 folderMenu?.querySelector('summary strong')?.textContent === 'Aucune branche' &&
                 !folderMenu?.querySelector('input[value="2"]'),
               libraryName,
               workspaceText,
+              savedSearchNames,
             };
           }
           await new Promise((resolve) => setTimeout(resolve, 30));
@@ -1524,13 +1677,74 @@ app
       throw new Error(`Known library UI refresh check failed: ${JSON.stringify(switchResult)}; inspect=${libraryInspectInvocations}; open=${libraryOpenInvocations}`);
     }
 
+    const staleSavedSearchWrite = await window.webContents.executeJavaScript(`
+      (async () => {
+        try {
+          await window.textotheque.createSavedSearch({
+            name: 'Ne doit pas atteindre B', query: '', fields: ['title', 'content', 'notes'], matchMode: 'all',
+            folderSelection: { folderIds: [], includeUnclassified: false }, statuses: [], favoriteOnly: false,
+            created: { period: 'all', from: null, to: null }, modified: { period: 'all', from: null, to: null },
+            sortBy: 'updated_at', direction: 'desc'
+          }, 'C:\\temporary\\textotheque.sqlite');
+          return { rejected: false };
+        } catch (error) {
+          return { rejected: true, names: (await window.textotheque.listSavedSearches()).map((item) => item.name) };
+        }
+      })()
+    `);
+    if (!staleSavedSearchWrite.rejected || staleSavedSearchWrite.names.join(',') !== 'Gaming B') {
+      throw new Error(`A stale saved-search write crossed the library boundary: ${JSON.stringify(staleSavedSearchWrite)}`);
+    }
+
+    await window.webContents.executeJavaScript(`document.querySelector('.toggle-navigation-button').click()`);
+    window.webContents.send('search:menu-action', { action: 'focus' });
+    const searchMenuFocusResult = await window.webContents.executeJavaScript(`
+      (async () => {
+        const start = Date.now();
+        while (Date.now() - start < 3000) {
+          if (document.querySelector('.navigation-pane') && document.activeElement === document.querySelector('.search-input-row input')) return true;
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        }
+        return false;
+      })()
+    `);
+    if (!searchMenuFocusResult) throw new Error('Native search menu intent did not reach the shared renderer focus handler.');
+    window.webContents.send('search:menu-action', { action: 'open', id: 1 });
+    const searchMenuOpenResult = await window.webContents.executeJavaScript(`
+      (async () => {
+        const start = Date.now();
+        while (Date.now() - start < 3000) {
+          if (
+            document.querySelector('.active-saved-search-label')?.textContent.includes('Gaming B') &&
+            document.querySelector('.search-input-row input')?.value === 'contenu' &&
+            document.querySelector('.saved-search-select')?.selectedOptions[0]?.textContent === 'Gaming B'
+          ) return true;
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        }
+        return false;
+      })()
+    `);
+    if (!searchMenuOpenResult) throw new Error('Native saved-search menu item did not reach the shared renderer load handler.');
+
     const mainSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.ts'), 'utf8');
+    const searchMenuSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'search-menu.ts'), 'utf8');
     const appSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'App.tsx'), 'utf8');
+    const navigationSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'NavigationPane.tsx'), 'utf8');
+    const catalogSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'DocumentCatalog.tsx'), 'utf8');
     if (!mainSource.includes("label: 'Ouvrir le TODO'") || !mainSource.includes("accelerator: 'CommandOrControl+Shift+T'")) {
       throw new Error('Native File menu TODO item or accelerator missing.');
     }
     if (appSource.includes("event.shiftKey && key === 't'")) {
       throw new Error('Ctrl+Shift+T must have only the native menu accelerator as owner.');
+    }
+    if (!searchMenuSource.includes("accelerator: 'CommandOrControl+F'") || appSource.includes("usesCtrl && key === 'f'")) {
+      throw new Error('Ctrl+F must have only the native Search menu accelerator as owner.');
+    }
+    if (navigationSource.includes('SavedSearch') || navigationSource.includes('Recherches enregistrées')) {
+      throw new Error('Structural NavigationPane must not own saved searches.');
+    }
+    if (!catalogSource.includes('saved-search-select') || !catalogSource.includes('onOpenSavedSearch(id)') || !appSource.includes('onOpenSavedSearch={(id) => { void handleOpenSavedSearch(id); }}')) {
+      throw new Error('Saved-search selector and native menu must converge on the shared renderer handler.');
     }
 
     const menuDirtySetup = await window.webContents.executeJavaScript(`
@@ -1586,6 +1800,7 @@ app
     `);
     if (!menuDirtyCancel.ok) throw new Error(`File menu dirty cancellation failed: ${menuDirtyCancel.message}`);
 
+    await window.webContents.executeJavaScript(`if (!document.querySelector('.navigation-pane')) document.querySelector('.toggle-navigation-button')?.click()`);
     const specialTodoResult = await window.webContents.executeJavaScript(`
       (async () => {
         const waitFor = async (predicate, label, timeout = 4000) => {
@@ -1648,6 +1863,10 @@ app
         document.querySelector('.clear-search-button').click();
         await waitFor(() => document.querySelector('.search-input-row input')?.value === '', 'clear TODO search');
 
+        if (!document.querySelector('.navigation-home')) {
+          document.querySelector('.toggle-navigation-button')?.click();
+          await waitFor(() => document.querySelector('.navigation-home'), 'navigation restored after TODO search');
+        }
         document.querySelector('.navigation-home').click();
         await waitFor(() => document.querySelector('.folder-section'), 'normal navigation after TODO');
         const normalTreeText = [

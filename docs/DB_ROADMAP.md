@@ -137,10 +137,12 @@ PRAGMA user_version
 État courant :
 
 ```text
-schema version = 4
+schema version = 5
 ```
 
 Depuis le schéma 4, la recherche documentaire utilise une table FTS5 external-content `documents_fts`. Elle indexe `documents.title`, `documents.content` et `documents.notes` avec le tokenizer CI_AI fixe `unicode61 remove_diacritics 2`. `documents` reste la source de vérité ; trois triggers synchronisent les insertions, les changements textuels réels et les suppressions physiques. La migration 3 → 4 reconstruit une fois l’index existant et vérifie sa cohérence avec la table externe.
+
+Depuis le schéma 5, les recherches enregistrées sont des données propres à la bibliothèque. `saved_searches` conserve les critères scalaires, tandis que `saved_search_folders` et `saved_search_statuses` normalisent les sélections multiples. Les périodes relatives restent des presets recalculés à l'exécution. Aucun SQL, résultat, descendant de dossier développé ou borne UTC calculée n'est persisté.
 
 Le numéro de schéma évolue uniquement lorsque la structure ou le contrat persistant exige une migration.
 
@@ -154,7 +156,10 @@ v3
 ajout éventuel de nouvelles tables/colonnes
 
 v4
-autre évolution du modèle
+index FTS5 external-content
+
+v5
+recherches enregistrées structurées
 ```
 
 La version de schéma est indépendante de la version de l’application.

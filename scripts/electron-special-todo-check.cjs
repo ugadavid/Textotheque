@@ -75,7 +75,7 @@ app.whenReady().then(async () => {
       CURRENT_SCHEMA_VERSION,
       TEXTOTHEQUE_APPLICATION_ID,
     } = await import('../dist-electron/database.js');
-    assert(CURRENT_SCHEMA_VERSION === 4, 'Le test TODO doit utiliser le schema 4.');
+    assert(CURRENT_SCHEMA_VERSION === 5, 'Le test TODO doit utiliser le schema 5.');
 
     const openDatabase = (name) => {
       const db = createTextothequeDatabase(databasePath(name));
@@ -192,7 +192,7 @@ app.whenReady().then(async () => {
     fixture.close();
     const migrated = createTextothequeDatabase(migrationPath);
     openDatabases.push(migrated);
-    assert(migrated.getLibraryInfo().userVersion === 4, 'La migration v2 vers v4 n a pas abouti.');
+    assert(migrated.getLibraryInfo().userVersion === 5, 'La migration v2 vers v5 n a pas abouti.');
     const migratedDocument = migrated.listDocuments().find((document) => document.title === 'tot_20260816_04');
     assert(migratedDocument?.content === 'Contenu v2 conserve' && migratedDocument.notes === 'Note v2',
       'La migration v2 vers v3 a altere le document existant.');
@@ -202,7 +202,7 @@ app.whenReady().then(async () => {
     assert(migrated.getOrCreateSpecialDocument('todo').special_role === 'todo',
       'La creation du TODO echoue apres migration v2 vers v3.');
 
-    successMessage = 'special TODO: schema 4, lazy creation, permanence, backup and independent libraries ok';
+    successMessage = 'special TODO: schema 5, lazy creation, permanence, backup and independent libraries ok';
   } finally {
     for (const db of openDatabases.splice(0)) db.close();
     removeTestTempDirectory(tempDirectory);

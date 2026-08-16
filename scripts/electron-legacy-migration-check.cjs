@@ -260,7 +260,7 @@ app
     try {
       const { createTextothequeDatabase, CURRENT_SCHEMA_VERSION, TEXTOTHEQUE_APPLICATION_ID } = await import('../dist-electron/database.js');
 
-      assert(CURRENT_SCHEMA_VERSION === 4, 'Le test legacy doit etre synchronise avec le schema courant v4.');
+      assert(CURRENT_SCHEMA_VERSION === 5, 'Le test legacy doit etre synchronise avec le schema courant v5.');
       assert(TEXTOTHEQUE_APPLICATION_ID === 1413830735, 'L application_id Textotheque definitif a change.');
       testFreshDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION, TEXTOTHEQUE_APPLICATION_ID);
       testPreTrashLegacyDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION, TEXTOTHEQUE_APPLICATION_ID);

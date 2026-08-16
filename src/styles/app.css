@@ -607,6 +607,12 @@ h2 {
   min-width: 0;
 }
 
+.active-saved-search-label {
+  margin: 2px 0 0;
+  color: #75695e;
+  font-size: 0.7rem;
+}
+
 .catalog-count {
   color: #75695e;
   font-size: 0.86rem;
@@ -930,6 +936,17 @@ h2 {
   min-width: 145px;
 }
 
+.saved-search-select-control {
+  min-width: 190px;
+  flex: 1 1 210px;
+}
+
+.saved-search-select-control select {
+  width: 100%;
+  min-width: 0;
+  max-width: 280px;
+}
+
 .custom-date-range {
   display: flex;
   flex-wrap: wrap;
@@ -956,6 +973,29 @@ h2 {
   padding: 6px 9px;
   font-size: 0.76rem;
   font-weight: 750;
+}
+
+.saved-search-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.saved-search-actions button {
+  border: 1px solid #cfc5b7;
+  border-radius: 6px;
+  background: #f7f2ea;
+  color: #51473f;
+  cursor: pointer;
+  padding: 6px 9px;
+  font-size: 0.76rem;
+  font-weight: 750;
+}
+
+.saved-search-actions button:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 .search-validation-message {
@@ -1362,6 +1402,21 @@ textarea:disabled {
   margin: 12px 0 0;
   color: #51473f;
   line-height: 1.5;
+}
+
+.saved-search-name-dialog label {
+  display: grid;
+  gap: 6px;
+  color: #51473f;
+  font-size: 0.78rem;
+}
+
+.saved-search-name-dialog input {
+  min-width: min(360px, 70vw);
+  border: 1px solid #cfc5b7;
+  border-radius: 6px;
+  padding: 7px 9px;
+  font: inherit;
 }
 
 .confirm-actions {

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { CatalogDocument, CatalogSortDirection, CatalogSortField } from '../types/catalog';
 import type { DocumentStatus, Folder } from '../types/document';
+import type { SavedSearchSummary } from '../types/saved-search';
 import type {
   DatePeriod,
   SearchDateFilter,
@@ -47,6 +48,10 @@ interface DocumentCatalogProps {
   title: string;
   eyebrow: string;
   folders: Folder[];
+  activeSavedSearchName: string | null;
+  activeSavedSearchId: number | null;
+  savedSearchModified: boolean;
+  savedSearches: SavedSearchSummary[];
   searchControls: SearchControls;
   onSort: (field: CatalogSortField) => void;
   onOpenDocument: (id: number) => void;
@@ -55,6 +60,11 @@ interface DocumentCatalogProps {
   onToggleNavigation: () => void;
   onToggleMetadata: () => void;
   onOpenTodo: () => void;
+  onSaveSearchAs: () => void;
+  onUpdateSavedSearch: () => void;
+  onRenameSavedSearch: () => void;
+  onDeleteSavedSearch: () => void;
+  onOpenSavedSearch: (id: number) => void;
 }
 
 const columns: Array<{ field: CatalogSortField; label: string; className: string }> = [
@@ -188,6 +198,10 @@ export default function DocumentCatalog({
   title,
   eyebrow,
   folders,
+  activeSavedSearchName,
+  activeSavedSearchId,
+  savedSearchModified,
+  savedSearches,
   searchControls,
   onSort,
   onOpenDocument,
@@ -196,6 +210,11 @@ export default function DocumentCatalog({
   onToggleNavigation,
   onToggleMetadata,
   onOpenTodo,
+  onSaveSearchAs,
+  onUpdateSavedSearch,
+  onRenameSavedSearch,
+  onDeleteSavedSearch,
+  onOpenSavedSearch,
 }: DocumentCatalogProps) {
   const foldersById = new Map(folders.map((folder) => [folder.id, folder]));
   const selectedFolderIds = new Set(searchControls.folderSelection.folderIds);
@@ -236,6 +255,9 @@ export default function DocumentCatalog({
         <div className="catalog-heading">
           <p className="eyebrow">{eyebrow}</p>
           <h1 id="catalog-title">{title}</h1>
+          {activeSavedSearchName ? <p className="active-saved-search-label">
+            Recherche enregistrée : {activeSavedSearchName}{savedSearchModified ? ' — modifiée' : ''}
+          </p> : null}
         </div>
         <div className="toolbar-search search-input-row">
           <span className="search-icon" aria-hidden="true">⌕</span>
@@ -351,8 +373,33 @@ export default function DocumentCatalog({
         <div className="search-date-controls">
           <DateFilterControl field="created" label="Créé" value={searchControls.created} onPeriodChange={searchControls.onDatePeriodChange} onBoundaryChange={searchControls.onDateBoundaryChange} />
           <DateFilterControl field="modified" label="Modifié" value={searchControls.modified} onPeriodChange={searchControls.onDatePeriodChange} onBoundaryChange={searchControls.onDateBoundaryChange} />
+          <label className="search-select-control saved-search-select-control">
+            <span>Recherche enregistrée</span>
+            <select
+              className="saved-search-select"
+              value={activeSavedSearchId ?? ''}
+              title={savedSearchModified ? 'Critères modifiés depuis la dernière sauvegarde' : undefined}
+              onChange={(event) => {
+                const id = Number(event.currentTarget.value);
+                if (Number.isSafeInteger(id) && id > 0) onOpenSavedSearch(id);
+              }}
+            >
+              <option value="">Recherches enregistrées…</option>
+              {savedSearches.map((savedSearch) => <option key={savedSearch.id} value={savedSearch.id}>
+                {savedSearch.name}{savedSearch.id === activeSavedSearchId && savedSearchModified ? ' *' : ''}
+              </option>)}
+            </select>
+          </label>
         </div>
-        <button className="reset-search-button" type="button" onClick={searchControls.onReset}>Réinitialiser</button>
+        <div className="saved-search-actions">
+          <button type="button" onClick={onSaveSearchAs}>{activeSavedSearchName ? 'Enregistrer sous…' : 'Enregistrer la recherche…'}</button>
+          {activeSavedSearchName ? <>
+            <button type="button" onClick={onUpdateSavedSearch} disabled={!savedSearchModified}>Mettre à jour</button>
+            <button type="button" onClick={onRenameSavedSearch}>Renommer…</button>
+            <button type="button" onClick={onDeleteSavedSearch}>Supprimer…</button>
+          </> : null}
+          <button className="reset-search-button" type="button" onClick={searchControls.onReset}>Réinitialiser</button>
+        </div>
         {searchControls.validationMessage ? <p className="search-validation-message" role="status">{searchControls.validationMessage}</p> : null}
       </section> : null}
 

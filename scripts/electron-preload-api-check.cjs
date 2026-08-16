@@ -8,7 +8,7 @@ app
       path: 'C:\\temporary\\textotheque.sqlite',
       fileName: 'textotheque.sqlite',
       applicationId: 1413830735,
-      userVersion: 4,
+      userVersion: 5,
       isTextotheque: true,
     }));
     let exportAvailable = false;
@@ -31,7 +31,7 @@ app
     ipcMain.handle('library:open', (_event, candidatePath, migrationApproved) => ({
       status: 'opened',
       inspection: { path: candidatePath, compatibility: 'compatible' },
-      library: { path: candidatePath, fileName: 'other.sqlite', applicationId: 1413830735, userVersion: 4, isTextotheque: true },
+      library: { path: candidatePath, fileName: 'other.sqlite', applicationId: 1413830735, userVersion: 5, isTextotheque: true },
       backupPath: migrationApproved ? 'C:\\temporary\\pre-migration.sqlite' : null,
     }));
     ipcMain.handle('library:inspect', (_event, candidatePath) => ({
@@ -43,7 +43,7 @@ app
     });
     ipcMain.handle('library:create', (_event, candidatePath) => ({
       status: 'created',
-      library: { path: candidatePath, fileName: 'created.sqlite', applicationId: 1413830735, userVersion: 4, isTextotheque: true },
+      library: { path: candidatePath, fileName: 'created.sqlite', applicationId: 1413830735, userVersion: 5, isTextotheque: true },
     }));
     ipcMain.handle('documents:list', () => []);
     ipcMain.handle('documents:list-catalog', (_event, options) => [{
@@ -129,6 +129,45 @@ app
     ipcMain.handle('documents:trash', (_event, id) => ({ id, deleted_at: '2026-07-09T00:01:00.000Z' }));
     ipcMain.handle('documents:restore', (_event, id) => ({ id, deleted_at: null }));
     ipcMain.handle('documents:empty-trash', () => 2);
+    const savedSearchCalls = [];
+    const savedDefinition = {
+      id: 7,
+      name: 'Soutenance récente',
+      query: 'instru',
+      fields: ['content', 'notes'],
+      matchMode: 'all',
+      folderSelection: { folderIds: [2, 4], includeUnclassified: true },
+      statuses: ['draft', 'active'],
+      favoriteOnly: true,
+      created: { period: 'custom', from: '2026-08-01', to: '2026-08-15' },
+      modified: { period: 'last15days', from: null, to: null },
+      sortBy: 'updated_at',
+      direction: 'desc',
+      createdAt: '2026-08-16T00:00:00.000Z',
+      updatedAt: '2026-08-16T00:00:00.000Z',
+    };
+    ipcMain.handle('saved-searches:list', () => [{ id: 7, name: savedDefinition.name, updatedAt: savedDefinition.updatedAt }]);
+    ipcMain.handle('saved-searches:get', (_event, id) => ({ ...savedDefinition, id }));
+    ipcMain.handle('saved-searches:create', (_event, input, expectedPath) => {
+      savedSearchCalls.push(['create', expectedPath]);
+      return { ...savedDefinition, ...input, id: 7 };
+    });
+    ipcMain.handle('saved-searches:update', (_event, id, input, expectedPath) => {
+      savedSearchCalls.push(['update', expectedPath]);
+      return { ...savedDefinition, ...input, id };
+    });
+    ipcMain.handle('saved-searches:rename', (_event, id, name, expectedPath) => {
+      savedSearchCalls.push(['rename', expectedPath]);
+      return { ...savedDefinition, id, name };
+    });
+    ipcMain.handle('saved-searches:delete', (_event, id, expectedPath) => {
+      savedSearchCalls.push(['delete', expectedPath]);
+      return id === 7;
+    });
+    ipcMain.handle('search:set-menu-state', (event, state) => {
+      event.sender.send('search:menu-action', { action: 'open', id: 7 });
+      return state;
+    });
 
     const window = new BrowserWindow({
       show: false,
@@ -158,6 +197,14 @@ app
         if (typeof api.listDocuments !== 'function') return { ok: false, reason: 'listDocuments missing' };
         if (typeof api.listDocumentCatalog !== 'function') return { ok: false, reason: 'listDocumentCatalog missing' };
         if (typeof api.searchDocuments !== 'function') return { ok: false, reason: 'searchDocuments missing' };
+        if (typeof api.listSavedSearches !== 'function') return { ok: false, reason: 'listSavedSearches missing' };
+        if (typeof api.getSavedSearch !== 'function') return { ok: false, reason: 'getSavedSearch missing' };
+        if (typeof api.createSavedSearch !== 'function') return { ok: false, reason: 'createSavedSearch missing' };
+        if (typeof api.updateSavedSearch !== 'function') return { ok: false, reason: 'updateSavedSearch missing' };
+        if (typeof api.renameSavedSearch !== 'function') return { ok: false, reason: 'renameSavedSearch missing' };
+        if (typeof api.deleteSavedSearch !== 'function') return { ok: false, reason: 'deleteSavedSearch missing' };
+        if (typeof api.setSearchMenuState !== 'function') return { ok: false, reason: 'setSearchMenuState missing' };
+        if (typeof api.onSearchMenuAction !== 'function') return { ok: false, reason: 'onSearchMenuAction missing' };
         if (typeof api.listDeletedDocuments !== 'function') return { ok: false, reason: 'listDeletedDocuments missing' };
         if (typeof api.createDocument !== 'function') return { ok: false, reason: 'createDocument missing' };
         if (typeof api.getOrCreateSpecialDocument !== 'function') return { ok: false, reason: 'getOrCreateSpecialDocument missing' };
@@ -182,6 +229,22 @@ app
           sortBy: 'relevance', direction: 'asc'
         });
         const libraryInfo = await api.getLibraryInfo();
+        const savedSearches = await api.listSavedSearches();
+        const savedSearch = await api.getSavedSearch(7);
+        const savedInput = { ...savedSearch };
+        delete savedInput.id;
+        delete savedInput.createdAt;
+        delete savedInput.updatedAt;
+        const expectedLibraryPath = libraryInfo.path;
+        const createdSavedSearch = await api.createSavedSearch(savedInput, expectedLibraryPath);
+        const updatedSavedSearch = await api.updateSavedSearch(7, savedInput, expectedLibraryPath);
+        const renamedSavedSearch = await api.renameSavedSearch(7, 'Soutenance finale', expectedLibraryPath);
+        const deletedSavedSearch = await api.deleteSavedSearch(7, expectedLibraryPath);
+        let receivedSearchMenuAction = null;
+        const unsubscribeSearchMenu = api.onSearchMenuAction((action) => { receivedSearchMenuAction = action; });
+        await api.setSearchMenuState({ activeSavedSearchId: 7, modified: true, canSave: true });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        unsubscribeSearchMenu();
         const startupNotice = await api.getLibraryStartupNotice();
         const canceledBackup = await api.backupLibrary();
         const chosenLibrary = await api.chooseOpenLibrary();
@@ -228,7 +291,15 @@ app
             !Object.prototype.hasOwnProperty.call(searchDocuments[0], 'content') &&
             libraryInfo.fileName === 'textotheque.sqlite' &&
             libraryInfo.applicationId === 1413830735 &&
-            libraryInfo.userVersion === 4 &&
+            libraryInfo.userVersion === 5 &&
+            savedSearches[0].name === 'Soutenance récente' &&
+            savedSearch.id === 7 &&
+            createdSavedSearch.folderSelection.folderIds.join(',') === '2,4' &&
+            updatedSavedSearch.modified.period === 'last15days' &&
+            renamedSavedSearch.name === 'Soutenance finale' &&
+            deletedSavedSearch === true &&
+            receivedSearchMenuAction?.action === 'open' &&
+            receivedSearchMenuAction?.id === 7 &&
             startupNotice === 'fallback temporaire' &&
             canceledBackup.canceled === true &&
             canceledBackup.path === null &&
@@ -268,6 +339,9 @@ app
     }
     if (!exportAvailable) {
       throw new Error('Preload API check failed: export availability was not forwarded');
+    }
+    if (savedSearchCalls.length !== 4 || savedSearchCalls.some((call) => call[1] !== 'C:\\temporary\\textotheque.sqlite')) {
+      throw new Error(`Preload API check failed: saved search library context was not forwarded (${JSON.stringify(savedSearchCalls)})`);
     }
 
     console.log('preload api ok');

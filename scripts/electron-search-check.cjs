@@ -108,7 +108,7 @@ app.whenReady().then(async () => {
       searchDateBounds,
     } = await import('../dist-electron/database.js');
 
-    assert(CURRENT_SCHEMA_VERSION === 4, 'La recherche doit utiliser le schema 4.');
+    assert(CURRENT_SCHEMA_VERSION === 5, 'La recherche doit utiliser le schema 5.');
     assert(quoteFts5Value('a"b') === '"a""b"', 'Le quoting FTS5 est incorrect.');
     assert(
       buildSafeFtsQuery('rab instrum', ['title', 'content'], 'all') === '{title content} : ("rab"* AND "instrum"*)',
@@ -123,8 +123,8 @@ app.whenReady().then(async () => {
       'Le mode phrase ne doit pas devenir une recherche par prefixe.'
     );
     db = createTextothequeDatabase(dbPath);
-    assert(db.getLibraryInfo().userVersion === 4, 'La migration 3 vers 4 n a pas abouti.');
-    assert(inspectTextothequeLibrary(dbPath).compatibility === 'compatible', 'La base v4 n est pas reconnue.');
+    assert(db.getLibraryInfo().userVersion === 5, 'La migration 3 vers 5 n a pas abouti.');
+    assert(inspectTextothequeLibrary(dbPath).compatibility === 'compatible', 'La base v5 n est pas reconnue.');
     db.verifyFullTextIndex();
 
     const migrated = db.searchDocuments(options('instrumentation'));
@@ -371,7 +371,7 @@ app.whenReady().then(async () => {
     db.verifyFullTextIndex();
 
     const backupInspection = await db.backupTo(backupPath);
-    assert(backupInspection.userVersion === 4, 'Le backup n est pas au schema 4.');
+    assert(backupInspection.userVersion === 5, 'Le backup n est pas au schema 5.');
     backupDb = createTextothequeDatabase(backupPath);
     assert(
       backupDb.searchDocuments(options('instrumentation')).some((item) => item.title === 'École instrumentale'),

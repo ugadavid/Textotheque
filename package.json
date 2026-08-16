@@ -1,7 +1,7 @@
 {
   "name": "textotheque",
   "productName": "Textotheque",
-  "version": "0.1.26",
+  "version": "0.1.27",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.js",
@@ -26,7 +26,8 @@
     "test:auto-title": "tsc -p electron/tsconfig.json && electron scripts/electron-auto-title-check.cjs",
     "test:special-todo": "tsc -p electron/tsconfig.json && electron scripts/electron-special-todo-check.cjs",
     "test:catalog": "tsc -p electron/tsconfig.json && electron scripts/electron-catalog-check.cjs",
-    "test:search": "tsc -p electron/tsconfig.json && electron scripts/electron-search-check.cjs"
+    "test:search": "tsc -p electron/tsconfig.json && electron scripts/electron-search-check.cjs",
+    "test:saved-searches": "tsc -p electron/tsconfig.json && electron scripts/electron-saved-searches-check.cjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
