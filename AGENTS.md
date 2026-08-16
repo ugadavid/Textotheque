@@ -844,6 +844,37 @@ Règles :
 
 Les tests multi-bibliothèques et le registre de tests doivent rester entièrement sous ressources temporaires.
 
+### Verrous Windows : diagnostiquer avant le marteau à retries™
+
+En cas de :
+
+```text
+EBUSY
+EPERM
+resource busy or locked
+```
+
+ne pas augmenter mécaniquement le nombre de retries.
+
+Identifier d’abord la ressource ou le processus encore propriétaire du fichier ou du répertoire :
+
+- fenêtre Electron non fermée ;
+- processus Chromium encore actif ;
+- profil Chromium / LevelDB encore ouvert ;
+- connexion SQLite encore ouverte ;
+- flux de fichier non libéré ;
+- autre ressource explicitement détenue par le test.
+
+Fermer correctement le propriétaire, attendre sa libération normale, puis nettoyer.
+
+Un retry **borné et court** peut absorber un délai normal de libération propre à Windows. Il ne doit jamais servir à masquer une ressource encore légitimement ouverte.
+
+Principe :
+
+> diagnostiquer d’abord ; utiliser le marteau à retries™ seulement comme petit maillet de finition, jamais comme méthode de libération de ressources.
+
+Ne jamais contourner un verrou en abandonnant le nettoyage des ressources temporaires.
+
 Ne jamais utiliser :
 
 ```text
