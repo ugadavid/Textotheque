@@ -1,6 +1,6 @@
 import type { DocumentInput, Folder, SpecialDocumentRole, TextDocument } from './document';
 import type { LibraryBackupResult, LibraryCreateResult, LibraryCreateSelection, LibraryInfo, LibraryMenuAction, LibraryOpenResult } from './library';
-import type { TextExportDraft, TextExportResult } from './text-export';
+import type { FileMenuAction, TextExportDraft, TextExportResult } from './text-export';
 
 declare global {
   interface Window {
@@ -16,7 +16,7 @@ declare global {
       onLibraryMenuAction: (callback: (action: LibraryMenuAction) => void) => () => void;
       exportTextDocument: (draft: TextExportDraft) => Promise<TextExportResult>;
       setDocumentExportAvailable: (available: boolean) => Promise<void>;
-      onFileMenuAction: (callback: () => void) => () => void;
+      onFileMenuAction: (callback: (action: FileMenuAction) => void) => () => void;
       listDocuments: () => Promise<TextDocument[]>;
       listDeletedDocuments: () => Promise<TextDocument[]>;
       listFolders: () => Promise<Folder[]>;

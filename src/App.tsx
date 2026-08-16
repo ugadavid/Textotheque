@@ -969,7 +969,11 @@ export default function App() {
     if (menuAction.action === 'backup') void handleBackupLibrary();
   }));
 
-  useEffect(() => window.textotheque.onFileMenuAction(() => {
+  useEffect(() => window.textotheque.onFileMenuAction((menuAction) => {
+    if (menuAction.action === 'open-todo') {
+      void handleOpenTodo();
+      return;
+    }
     const snapshot = latestTextExportRef.current;
     if (snapshot) void handleExportTextDocument({ ...snapshot });
   }));
@@ -1107,12 +1111,6 @@ export default function App() {
     function handleKeyDown(event: KeyboardEvent) {
       const key = event.key.toLowerCase();
       const usesCtrl = event.ctrlKey || event.metaKey;
-
-      if (usesCtrl && event.shiftKey && key === 't') {
-        event.preventDefault();
-        void handleOpenTodo();
-        return;
-      }
 
       if (usesCtrl && key === 's') {
         event.preventDefault();

@@ -1129,6 +1129,20 @@ Ne pas ajouter une fonctionnalité hors mission explicite.
 
 ## 31. UX : comportements à préserver
 
+### Découvrabilité et menus
+
+Lors de l’ajout d’une fonctionnalité utilisateur, déterminer explicitement si elle mérite un accès depuis un menu natif.
+
+Principe général :
+
+- toolbar : actions fréquentes et directement utiles dans le contexte courant ;
+- menus : actions structurantes, occasionnelles ou devant rester découvrables ;
+- raccourcis clavier : accès rapide pour les usages fréquents.
+
+Une même fonctionnalité peut légitimement disposer des trois lorsque ces accès répondent à des usages différents. Ne pas ajouter automatiquement chaque commande dans chaque surface : choisir selon l’usage réel et éviter les menus surchargés.
+
+Lorsqu’une commande de menu possède un raccourci, l’afficher dans le menu lorsque la plateforme le permet naturellement. Garantir qu’un raccourci ne déclenche qu’une seule intention applicative.
+
 Conserver sauf demande contraire :
 
 ```text

@@ -19,6 +19,7 @@ import { LibraryHistoryRegistry, type KnownLibrary } from './library-history.js'
 import {
   suggestedTextExportFileName,
   writeTextExport,
+  type FileMenuAction,
   type TextExportDraft,
   type TextExportResult,
 } from './text-export.js';
@@ -200,8 +201,8 @@ function sendLibraryMenuAction(action: LibraryMenuAction): void {
   mainWindow?.webContents.send('library:menu-action', action);
 }
 
-function sendFileMenuAction(): void {
-  mainWindow?.webContents.send('file:menu-action', { action: 'export-text' });
+function sendFileMenuAction(action: FileMenuAction): void {
+  mainWindow?.webContents.send('file:menu-action', action);
 }
 
 function knownLibraryLabels(libraries: KnownLibrary[]): Map<string, string> {
@@ -234,11 +235,19 @@ function refreshApplicationMenu(): void {
   const template: MenuItemConstructorOptions[] = [
     {
       label: 'Fichier',
-      submenu: [{
-        label: 'Exporter en texte (.txt)…',
-        enabled: documentExportAvailable,
-        click: sendFileMenuAction,
-      }],
+      submenu: [
+        {
+          label: 'Ouvrir le TODO',
+          accelerator: 'CommandOrControl+Shift+T',
+          click: () => sendFileMenuAction({ action: 'open-todo' }),
+        },
+        { type: 'separator' },
+        {
+          label: 'Exporter en texte (.txt)…',
+          enabled: documentExportAvailable,
+          click: () => sendFileMenuAction({ action: 'export-text' }),
+        },
+      ],
     },
     {
       label: 'Bibliothèque',

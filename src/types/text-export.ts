@@ -8,4 +8,4 @@ export interface TextExportResult {
   fileName: string | null;
 }
 
-export type FileMenuAction = { action: 'export-text' };
+export type FileMenuAction = { action: 'export-text' | 'open-todo' };

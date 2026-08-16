@@ -16,6 +16,7 @@ app
       exportAvailable = available;
     });
     ipcMain.handle('file:export-text', (event, draft) => {
+      event.sender.send('file:menu-action', { action: 'open-todo' });
       event.sender.send('file:menu-action', { action: 'export-text' });
       return { canceled: false, fileName: `${draft.title}.txt` };
     });
@@ -152,8 +153,8 @@ app
         const chosenLibrary = await api.chooseOpenLibrary();
         const openedLibrary = await api.openLibrary(chosenLibrary.inspection.path, true);
         const inspectedLibrary = await api.inspectLibrary('C:\\temporary\\known.sqlite');
-        let fileMenuActionReceived = false;
-        const unsubscribeFileMenu = api.onFileMenuAction(() => { fileMenuActionReceived = true; });
+        const fileMenuActions = [];
+        const unsubscribeFileMenu = api.onFileMenuAction((action) => { fileMenuActions.push(action.action); });
         await api.setDocumentExportAvailable(true);
         const textExport = await api.exportTextDocument({ title: 'Brouillon', content: 'exact\\ncontent' });
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -193,7 +194,7 @@ app
             openedLibrary.library.fileName === 'other.sqlite' &&
             openedLibrary.backupPath.endsWith('pre-migration.sqlite') &&
             inspectedLibrary.status === 'compatible' &&
-            fileMenuActionReceived &&
+            fileMenuActions.join(',') === 'open-todo,export-text' &&
             textExport.canceled === false &&
             textExport.fileName === 'Brouillon.txt' &&
             receivedMenuAction?.action === 'new' &&

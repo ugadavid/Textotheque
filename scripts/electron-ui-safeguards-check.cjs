@@ -1,4 +1,5 @@
 const path = require('node:path');
+const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
 const { app, BrowserWindow, ipcMain } = require('electron');
 const { version: packageVersion } = require('../package.json');
@@ -68,6 +69,7 @@ let libraryChooseOpenInvocations = 0;
 let libraryChooseCreateInvocations = 0;
 let libraryInspectInvocations = 0;
 let libraryOpenInvocations = 0;
+let specialDocumentInvocations = 0;
 let libraryInfo = {
   path: 'C:\\temporary\\test-ui.sqlite',
   fileName: 'test-ui.sqlite',
@@ -180,6 +182,7 @@ app
     });
     ipcMain.handle('documents:get-or-create-special', (_event, role) => {
       rejectIfForced('documents:get-or-create-special');
+      specialDocumentInvocations += 1;
       const existing = documents.find((document) => document.special_role === role);
       if (existing) return cloneDocument(existing);
       const created = {
@@ -1241,6 +1244,68 @@ app
       throw new Error(`Known library UI refresh check failed: ${JSON.stringify(switchResult)}; inspect=${libraryInspectInvocations}; open=${libraryOpenInvocations}`);
     }
 
+    const mainSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.ts'), 'utf8');
+    const appSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'App.tsx'), 'utf8');
+    if (!mainSource.includes("label: 'Ouvrir le TODO'") || !mainSource.includes("accelerator: 'CommandOrControl+Shift+T'")) {
+      throw new Error('Native File menu TODO item or accelerator missing.');
+    }
+    if (appSource.includes("event.shiftKey && key === 't'")) {
+      throw new Error('Ctrl+Shift+T must have only the native menu accelerator as owner.');
+    }
+
+    const menuDirtySetup = await window.webContents.executeJavaScript(`
+      (async () => {
+        const waitFor = async (predicate, label) => {
+          const start = Date.now();
+          while (Date.now() - start < 3000) {
+            const value = predicate();
+            if (value) return value;
+            await new Promise((resolve) => setTimeout(resolve, 30));
+          }
+          throw new Error('Timeout: ' + label);
+        };
+        const allButton = Array.from(document.querySelectorAll('.nav-view-button'))
+          .find((button) => button.textContent.includes('Tous les textes'));
+        allButton.click();
+        await waitFor(() => document.querySelector('.document-item'), 'menu dirty source document');
+        document.querySelector('.document-item').click();
+        const editor = await waitFor(() => document.querySelector('.content-editor'), 'menu dirty editor');
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')
+          .set.call(editor, 'Modification protegee depuis le menu');
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        await waitFor(() => document.querySelector('.title-dirty-marker'), 'menu dirty state');
+        return { ok: true };
+      })().catch((error) => ({ ok: false, message: error.stack }))
+    `);
+    if (!menuDirtySetup.ok) throw new Error(`File menu dirty setup failed: ${menuDirtySetup.message}`);
+
+    window.webContents.send('file:menu-action', { action: 'open-todo' });
+    const menuDirtyCancel = await window.webContents.executeJavaScript(`
+      (async () => {
+        const waitFor = async (predicate, label) => {
+          const start = Date.now();
+          while (Date.now() - start < 3000) {
+            const value = predicate();
+            if (value) return value;
+            await new Promise((resolve) => setTimeout(resolve, 30));
+          }
+          throw new Error('Timeout: ' + label);
+        };
+        const dialog = await waitFor(() => document.querySelector('.confirm-dialog'), 'file menu dirty guard');
+        Array.from(dialog.querySelectorAll('button')).find((button) => button.textContent.includes('Annuler')).click();
+        await waitFor(() => !document.querySelector('.confirm-dialog'), 'file menu cancellation');
+        if ((await window.textotheque.listDocuments()).some((item) => item.special_role === 'todo')) {
+          throw new Error('File menu created TODO before dirty guard approval');
+        }
+        const editor = document.querySelector('.content-editor');
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(editor, 'Contenu B');
+        editor.dispatchEvent(new Event('input', { bubbles: true }));
+        await waitFor(() => !document.querySelector('.title-dirty-marker'), 'restore clean document after menu cancellation');
+        return { ok: true };
+      })().catch((error) => ({ ok: false, message: error.stack }))
+    `);
+    if (!menuDirtyCancel.ok) throw new Error(`File menu dirty cancellation failed: ${menuDirtyCancel.message}`);
+
     const specialTodoResult = await window.webContents.executeJavaScript(`
       (async () => {
         const waitFor = async (predicate, label, timeout = 4000) => {
@@ -1318,22 +1383,37 @@ app
         const normalDocument = Array.from(document.querySelectorAll('.document-item')).find((item) => !item.textContent.includes('TODO'));
         normalDocument.click();
         await waitFor(() => document.querySelector('.title-input')?.value !== 'TODO', 'normal document before shortcut');
-        const shortcut = new KeyboardEvent('keydown', { key: 'T', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true });
-        window.dispatchEvent(shortcut);
-        await waitFor(() => document.querySelector('.title-input')?.value === 'TODO', 'Ctrl+Shift+T opens TODO');
-        if (!shortcut.defaultPrevented) throw new Error('Ctrl+Shift+T was not intercepted');
-        const countBeforeNoop = (await window.textotheque.listDocuments()).length;
-        document.querySelector('.todo-toolbar-button').click();
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        const countAfterNoop = (await window.textotheque.listDocuments()).length;
         return {
-          ok: countBeforeNoop === countAfterNoop &&
-            (await window.textotheque.listDocuments()).filter((item) => item.special_role === 'todo').length === 1,
+          ok: (await window.textotheque.listDocuments()).filter((item) => item.special_role === 'todo').length === 1,
         };
       })().catch((error) => ({ ok: false, message: error.stack }))
     `);
     if (!specialTodoResult.ok) {
       throw new Error(`Special TODO UI check failed: ${specialTodoResult.message ?? 'unknown error'}`);
+    }
+
+    const invocationsBeforeMenuOpen = specialDocumentInvocations;
+    window.webContents.send('file:menu-action', { action: 'open-todo' });
+    const menuOpenResult = await window.webContents.executeJavaScript(`
+      (async () => {
+        const start = Date.now();
+        while (Date.now() - start < 3000) {
+          if (document.querySelector('.title-input')?.value === 'TODO') return { ok: true };
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        }
+        return { ok: false, message: 'File menu did not open TODO' };
+      })()
+    `);
+    if (!menuOpenResult.ok || specialDocumentInvocations !== invocationsBeforeMenuOpen + 1) {
+      throw new Error(`File menu TODO workflow was not executed exactly once: ${JSON.stringify(menuOpenResult)}`);
+    }
+
+    const invocationsBeforeNoop = specialDocumentInvocations;
+    const documentCountBeforeNoop = documents.length;
+    window.webContents.send('file:menu-action', { action: 'open-todo' });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    if (specialDocumentInvocations !== invocationsBeforeNoop || documents.length !== documentCountBeforeNoop) {
+      throw new Error('File menu TODO action is not a clean no-op when TODO is already current.');
     }
 
     const unexpectedRejectionLog = rendererConsoleMessages.find((message) =>

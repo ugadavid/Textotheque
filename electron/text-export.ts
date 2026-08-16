@@ -10,6 +10,8 @@ export interface TextExportResult {
   fileName: string | null;
 }
 
+export type FileMenuAction = { action: 'export-text' | 'open-todo' };
+
 const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
 
 export function suggestedTextExportFileName(title: string): string {
