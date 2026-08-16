@@ -5,6 +5,8 @@ import type {
   Folder,
   LibraryBackupResult,
   LibraryInfo,
+  SearchDocument,
+  SearchDocumentsOptions,
   SpecialDocumentRole,
   TextDocument,
 } from './database.js';
@@ -39,6 +41,8 @@ const api = {
   listDocuments: (): Promise<TextDocument[]> => ipcRenderer.invoke('documents:list'),
   listDocumentCatalog: (options: DocumentCatalogOptions): Promise<CatalogDocument[]> =>
     ipcRenderer.invoke('documents:list-catalog', options),
+  searchDocuments: (options: SearchDocumentsOptions): Promise<SearchDocument[]> =>
+    ipcRenderer.invoke('documents:search', options),
   listDeletedDocuments: (): Promise<TextDocument[]> => ipcRenderer.invoke('documents:list-deleted'),
   listFolders: (): Promise<Folder[]> => ipcRenderer.invoke('folders:list'),
   createFolder: (parentId: number | null): Promise<Folder> => ipcRenderer.invoke('folders:create', parentId),

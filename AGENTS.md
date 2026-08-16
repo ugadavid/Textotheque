@@ -209,7 +209,7 @@ PRAGMA user_version
 Le schéma courant est actuellement :
 
 ```text
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 ```
 
 La version de schéma est indépendante de la version applicative.
@@ -253,6 +253,8 @@ Ordre d’initialisation à préserver :
 Ne jamais créer un index dépendant d’une colonne avant d’avoir garanti l’existence de cette colonne.
 
 Ce problème a déjà provoqué un bug réel avec `deleted_at`.
+
+Le schéma 4 ajoute `documents_fts`, une table FTS5 external-content indexant uniquement `title`, `content` et `notes` avec `unicode61 remove_diacritics 2`. La table `documents` reste la source de vérité. Les triggers dédiés maintiennent l’index lors des insertions, modifications textuelles réelles et suppressions physiques. Un `rebuild` est réservé à la migration ou à une réparation explicite, jamais au démarrage normal.
 
 ### La base n’est pas un dépotoir
 
@@ -845,6 +847,8 @@ npm.cmd run test:autosave
 npm.cmd run test:text-export
 npm.cmd run test:auto-title
 npm.cmd run test:special-todo
+npm.cmd run test:catalog
+npm.cmd run test:search
 ```
 
 ### Rôle des principaux tests
@@ -915,10 +919,18 @@ npm.cmd run test:special-todo
 
 `test:special-todo`
 
-- migration de schéma 2 vers 3 ;
+- migration de schéma 2 vers le schéma courant ;
 - création paresseuse et unicité du TODO ;
 - permanence, nettoyage des brouillons et indépendance des bibliothèques ;
 - conservation par backup.
+
+`test:search`
+
+- migration 3 vers 4 et reconstruction initiale FTS5 ;
+- synchronisation external-content et vérification d’intégrité ;
+- CI_AI fixe, zones, modes de correspondance et caractères spéciaux ;
+- périodes civiles locales, date seule et texte + date ;
+- snippets légers, corbeille, TODO et backup.
 
 ---
 
@@ -1086,7 +1098,9 @@ Fonctionnalités présentes notamment :
 - création / édition / sauvegarde explicite ;
 - dirty state ;
 - confirmation anti-perte ;
-- recherche globale simple ;
+- recherche plein texte FTS5 CI_AI avec zones et modes explicites ;
+- filtre rapide de période de création ;
+- résultats dans le catalogue central avec pertinence et snippets ;
 - barre de statut ;
 - raccourcis clavier ;
 - corbeille / restauration / vidage ;
@@ -1117,7 +1131,6 @@ Fonctionnalités volontairement absentes ou reportées :
 - drag and drop ;
 - déplacement de dossiers ;
 - suppression de dossiers ;
-- recherche FTS ;
 - historique documentaire ;
 - packaging ;
 - synchronisation/cloud ;

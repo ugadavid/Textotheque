@@ -11,6 +11,7 @@ interface EditorPaneProps {
   notice: string | null;
   isDeleted: boolean;
   isTodo: boolean;
+  advancedSearchActive: boolean;
   searchQuery: string;
   navigationVisible: boolean;
   metadataVisible: boolean;
@@ -21,6 +22,7 @@ interface EditorPaneProps {
   onToggleNavigation: () => void;
   onToggleMetadata: () => void;
   onOpenTodo: () => void;
+  onOpenAdvancedSearch: () => void;
   onSave: () => void;
   onTrash: () => void;
   onRestore: () => void;
@@ -44,6 +46,7 @@ export default function EditorPane({
   notice,
   isDeleted,
   isTodo,
+  advancedSearchActive,
   searchQuery,
   navigationVisible,
   metadataVisible,
@@ -54,6 +57,7 @@ export default function EditorPane({
   onToggleNavigation,
   onToggleMetadata,
   onOpenTodo,
+  onOpenAdvancedSearch,
   onSave,
   onTrash,
   onRestore,
@@ -140,6 +144,13 @@ export default function EditorPane({
           />
           {searchQuery.trim() ? <button className="clear-search-button" type="button" onClick={onClearSearch} title="Vider la recherche" aria-label="Vider la recherche">×</button> : null}
         </div>
+        <button
+          className={advancedSearchActive ? 'advanced-search-button active' : 'advanced-search-button'}
+          type="button"
+          onClick={onOpenAdvancedSearch}
+        >
+          Recherche avancée
+        </button>
         <div className="save-controls">
           {document ? <>
             <span className={`save-state ${saveState}`}>{saveLabels[saveState]}</span>

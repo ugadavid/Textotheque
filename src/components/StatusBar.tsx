@@ -7,6 +7,7 @@ interface StatusBarProps {
   totalDocuments: number;
   visibleDocuments: number;
   searchQuery: string;
+  searchActive: boolean;
   currentView: DocumentView;
   contextLabel: string;
   trashCount: number;
@@ -31,6 +32,7 @@ export default function StatusBar({
   totalDocuments,
   visibleDocuments,
   searchQuery,
+  searchActive,
   currentView,
   contextLabel,
   trashCount,
@@ -50,8 +52,9 @@ export default function StatusBar({
       <span>{contextLabel}</span>
       <span>{totalDocuments} documents</span>
       {currentView !== 'trash' ? <span>Corbeille: {trashCount}</span> : null}
-      {trimmedSearch ? <span>{visibleDocuments} affiches</span> : null}
+      {searchActive ? <span>{visibleDocuments} affiches</span> : null}
       {trimmedSearch ? <span>Recherche: "{trimmedSearch}"</span> : null}
+      {searchActive && !trimmedSearch ? <span>Recherche par date</span> : null}
       <span>{selectedDocument ? `Document ${selectedDocument.id}` : 'Aucune selection'}</span>
       <span>{selectedDocument?.content_format ?? 'plain'}</span>
       <span>{status}</span>

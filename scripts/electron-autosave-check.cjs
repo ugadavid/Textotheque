@@ -4,7 +4,7 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 
 const libraryA = 'C:\\temporary\\autosave-a.sqlite';
 const libraryB = 'C:\\temporary\\autosave-b.sqlite';
-let libraryInfo = { path: libraryA, fileName: 'autosave-a.sqlite', applicationId: 1413830735, userVersion: 3, isTextotheque: true };
+let libraryInfo = { path: libraryA, fileName: 'autosave-a.sqlite', applicationId: 1413830735, userVersion: 4, isTextotheque: true };
 let documents = [
   { id: 1, title: 'Premier document', content: 'Initial A', content_format: 'plain', status: 'active', favorite: 0, created_at: '2026-08-15T00:00:00.000Z', updated_at: '2026-08-15T00:00:00.000Z', last_opened_at: null, deleted_at: null, notes: '', folder_id: null },
   { id: 2, title: 'Deuxieme document', content: 'Initial deux', content_format: 'plain', status: 'active', favorite: 0, created_at: '2026-08-15T00:00:00.000Z', updated_at: '2026-08-15T00:00:00.000Z', last_opened_at: null, deleted_at: null, notes: '', folder_id: null },
@@ -42,7 +42,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('library:create', () => ({ status: 'create-failed', library: null }));
   ipcMain.handle('library:inspect', (_event, candidatePath) => ({
     status: 'compatible',
-    inspection: { path: candidatePath, fileName: path.basename(candidatePath), readable: true, applicationId: 1413830735, userVersion: 3, isTextotheque: true, compatibility: 'compatible' },
+    inspection: { path: candidatePath, fileName: path.basename(candidatePath), readable: true, applicationId: 1413830735, userVersion: 4, isTextotheque: true, compatibility: 'compatible' },
     library: null,
     backupPath: null,
   }));
@@ -52,6 +52,17 @@ app.whenReady().then(async () => {
     return { status: 'opened', inspection: null, library: { ...libraryInfo }, backupPath: null };
   });
   ipcMain.handle('documents:list', () => documents.filter((document) => !document.deleted_at).map(clone));
+  ipcMain.handle('documents:list-catalog', () => documents.filter((document) => !document.deleted_at).map((document) => ({
+    id: document.id,
+    title: document.title,
+    folderId: document.folder_id,
+    folderName: null,
+    status: document.status,
+    favorite: Boolean(document.favorite),
+    createdAt: document.created_at,
+    updatedAt: document.updated_at,
+    specialRole: document.special_role ?? null,
+  })));
   ipcMain.handle('documents:list-deleted', () => []);
   ipcMain.handle('documents:get', (_event, id) => clone(documents.find((document) => document.id === id)));
   ipcMain.handle('documents:mark-opened', (_event, id) => clone(documents.find((document) => document.id === id)));
@@ -129,7 +140,9 @@ app.whenReady().then(async () => {
       ${setup}
       await waitFor(() => document.querySelector('.content-editor'), 'editor ready');
       Array.from(document.querySelectorAll('.nav-view-button')).find((button) => button.textContent.includes('Tous les textes')).click();
-      await waitFor(() => document.querySelectorAll('.document-item').length === 2, 'all documents view');
+      await waitFor(() => document.querySelectorAll('.catalog-row').length === 2, 'all documents view');
+      document.querySelector('.catalog-row.selected').click();
+      await waitFor(() => document.querySelector('.content-editor'), 'selected document restored from catalog');
       setEditor('Debounce 1');
       await new Promise((resolve) => setTimeout(resolve, 100));
       setEditor('Debounce 2');

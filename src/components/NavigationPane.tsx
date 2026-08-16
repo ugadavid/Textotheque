@@ -5,7 +5,6 @@ const EXPANDED_FOLDERS_KEY = 'textotheque:expanded-folders:v2';
 type DocumentView = 'navigation' | 'all' | 'unfiled' | 'folder' | 'trash';
 
 interface NavigationPaneProps {
-  searchResults: TextDocument[];
   allDocuments: TextDocument[];
   deletedDocuments: TextDocument[];
   folders: Folder[];
@@ -15,7 +14,6 @@ interface NavigationPaneProps {
   unfiledCount: number;
   folderDocumentCounts: Record<number, number>;
   trashCount: number;
-  searchQuery: string;
   selectedDocumentId: number | null;
   dirtyDocumentId: number | null;
   onViewChange: (view: DocumentView, folderId?: number | null) => void;
@@ -81,8 +79,8 @@ function displayTitle(document: TextDocument): string {
 
 export default function NavigationPane(props: NavigationPaneProps) {
   const {
-    searchResults, allDocuments, deletedDocuments, folders, currentView, selectedFolderId,
-    activeCount, unfiledCount, folderDocumentCounts, trashCount, searchQuery,
+    allDocuments, deletedDocuments, folders, currentView, selectedFolderId,
+    activeCount, unfiledCount, folderDocumentCounts, trashCount,
     selectedDocumentId, dirtyDocumentId, onViewChange, onCreateDocument, onCreateFolder,
     onRenameFolder, onSelectDocument, onEmptyTrash,
   } = props;
@@ -90,8 +88,7 @@ export default function NavigationPane(props: NavigationPaneProps) {
   const [editingFolderName, setEditingFolderName] = useState('');
   const [expandedFolderIds, setExpandedFolderIds] = useState<Set<number>>(loadExpandedFolderIds);
   const [isUnfiledExpanded, setIsUnfiledExpanded] = useState(false);
-  const hasSearch = searchQuery.trim().length > 0;
-  const isNavigationMode = !hasSearch && ['navigation', 'folder', 'unfiled'].includes(currentView);
+  const isNavigationMode = ['navigation', 'folder', 'unfiled'].includes(currentView);
   const folderRows = useMemo(() => buildFolderRows(folders, expandedFolderIds), [folders, expandedFolderIds]);
   const treeDocuments = useMemo(
     () => allDocuments.filter((document) => document.special_role !== 'todo'),
@@ -164,19 +161,18 @@ export default function NavigationPane(props: NavigationPaneProps) {
       <button className="icon-button" type="button" onClick={onCreateDocument} title="Nouveau document - Ctrl+N">+</button>
     </div>
 
-    {!hasSearch ? <div className="nav-view-switch" aria-label="Vue des documents">
+    <div className="nav-view-switch" aria-label="Vue des documents">
       <button className={currentView === 'all' ? 'nav-view-button selected' : 'nav-view-button'} type="button" onClick={() => onViewChange('all', null)}>
         Tous les textes <span>{activeCount}</span>
       </button>
       <button className={currentView === 'trash' ? 'nav-view-button selected' : 'nav-view-button'} type="button" onClick={() => onViewChange('trash', null)}>
         Corbeille <span>{trashCount}</span>
       </button>
-    </div> : null}
+    </div>
 
     <div className="navigation-scroll-region">
-      {hasSearch ? simpleList(searchResults, 'Résultats', 'Aucun document trouvé.', 'all') : null}
-      {!hasSearch && currentView === 'all' ? simpleList(allDocuments, 'Tous les textes', 'Aucun document pour le moment.', 'all') : null}
-      {!hasSearch && currentView === 'trash' ? <section className="navigation-mode" aria-label="Corbeille">
+      {currentView === 'all' ? simpleList(allDocuments, 'Tous les textes', 'Aucun document pour le moment.', 'all') : null}
+      {currentView === 'trash' ? <section className="navigation-mode" aria-label="Corbeille">
         <div className="navigation-mode-header"><span>Corbeille</span><strong>{trashCount}</strong></div>
         <button className="empty-trash-button" type="button" onClick={onEmptyTrash} disabled={trashCount === 0}>Vider la corbeille</button>
         {simpleList(deletedDocuments, 'Documents supprimés', 'La corbeille est vide.', 'trash')}

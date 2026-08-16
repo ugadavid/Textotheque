@@ -8,7 +8,7 @@ app
       path: 'C:\\temporary\\textotheque.sqlite',
       fileName: 'textotheque.sqlite',
       applicationId: 1413830735,
-      userVersion: 3,
+      userVersion: 4,
       isTextotheque: true,
     }));
     let exportAvailable = false;
@@ -31,7 +31,7 @@ app
     ipcMain.handle('library:open', (_event, candidatePath, migrationApproved) => ({
       status: 'opened',
       inspection: { path: candidatePath, compatibility: 'compatible' },
-      library: { path: candidatePath, fileName: 'other.sqlite', applicationId: 1413830735, userVersion: 3, isTextotheque: true },
+      library: { path: candidatePath, fileName: 'other.sqlite', applicationId: 1413830735, userVersion: 4, isTextotheque: true },
       backupPath: migrationApproved ? 'C:\\temporary\\pre-migration.sqlite' : null,
     }));
     ipcMain.handle('library:inspect', (_event, candidatePath) => ({
@@ -43,7 +43,7 @@ app
     });
     ipcMain.handle('library:create', (_event, candidatePath) => ({
       status: 'created',
-      library: { path: candidatePath, fileName: 'created.sqlite', applicationId: 1413830735, userVersion: 3, isTextotheque: true },
+      library: { path: candidatePath, fileName: 'created.sqlite', applicationId: 1413830735, userVersion: 4, isTextotheque: true },
     }));
     ipcMain.handle('documents:list', () => []);
     ipcMain.handle('documents:list-catalog', (_event, options) => [{
@@ -56,6 +56,19 @@ app
       createdAt: '2026-07-09T00:00:00.000Z',
       updatedAt: '2026-07-09T00:01:00.000Z',
       specialRole: options.sortBy === 'updated_at' && options.direction === 'desc' ? 'todo' : null,
+    }]);
+    ipcMain.handle('documents:search', (_event, options) => [{
+      id: 4,
+      title: 'Recherche',
+      folderId: null,
+      folderName: null,
+      status: 'active',
+      favorite: false,
+      createdAt: '2026-07-09T00:00:00.000Z',
+      updatedAt: '2026-07-09T00:01:00.000Z',
+      specialRole: null,
+      snippet: options.query ? '\uE000résultat\uE001' : null,
+      relevance: options.query ? -1 : null,
     }]);
     ipcMain.handle('documents:list-deleted', () => []);
     ipcMain.handle('documents:create', (_event, folderId = null) => ({
@@ -144,6 +157,7 @@ app
         if (typeof api.onFileMenuAction !== 'function') return { ok: false, reason: 'onFileMenuAction missing' };
         if (typeof api.listDocuments !== 'function') return { ok: false, reason: 'listDocuments missing' };
         if (typeof api.listDocumentCatalog !== 'function') return { ok: false, reason: 'listDocumentCatalog missing' };
+        if (typeof api.searchDocuments !== 'function') return { ok: false, reason: 'searchDocuments missing' };
         if (typeof api.listDeletedDocuments !== 'function') return { ok: false, reason: 'listDeletedDocuments missing' };
         if (typeof api.createDocument !== 'function') return { ok: false, reason: 'createDocument missing' };
         if (typeof api.getOrCreateSpecialDocument !== 'function') return { ok: false, reason: 'getOrCreateSpecialDocument missing' };
@@ -160,6 +174,10 @@ app
         });
         const documents = await api.listDocuments();
         const catalogDocuments = await api.listDocumentCatalog({ sortBy: 'updated_at', direction: 'desc' });
+        const searchDocuments = await api.searchDocuments({
+          query: 'résultat', fields: ['title', 'content', 'notes'], matchMode: 'all',
+          createdPeriod: 'all', sortBy: 'relevance', direction: 'asc'
+        });
         const libraryInfo = await api.getLibraryInfo();
         const startupNotice = await api.getLibraryStartupNotice();
         const canceledBackup = await api.backupLibrary();
@@ -201,9 +219,13 @@ app
             catalogDocuments[0].favorite === true &&
             catalogDocuments[0].specialRole === 'todo' &&
             !Object.prototype.hasOwnProperty.call(catalogDocuments[0], 'content') &&
+            searchDocuments.length === 1 &&
+            searchDocuments[0].snippet.includes('résultat') &&
+            searchDocuments[0].relevance === -1 &&
+            !Object.prototype.hasOwnProperty.call(searchDocuments[0], 'content') &&
             libraryInfo.fileName === 'textotheque.sqlite' &&
             libraryInfo.applicationId === 1413830735 &&
-            libraryInfo.userVersion === 3 &&
+            libraryInfo.userVersion === 4 &&
             startupNotice === 'fallback temporaire' &&
             canceledBackup.canceled === true &&
             canceledBackup.path === null &&

@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import {
   type DocumentCatalogOptions,
   type DocumentInput,
+  type SearchDocumentsOptions,
   type SpecialDocumentRole,
   type TextothequeDatabase,
 } from './database.js';
@@ -178,6 +179,9 @@ function registerIpcHandlers(): void {
   registerIpcHandler('documents:list', () => getDatabase().listDocuments());
   registerIpcHandler('documents:list-catalog', (_event, options: DocumentCatalogOptions) =>
     getDatabase().listDocumentCatalog(options)
+  );
+  registerIpcHandler('documents:search', (_event, options: SearchDocumentsOptions) =>
+    getDatabase().searchDocuments(options)
   );
   registerIpcHandler('documents:list-deleted', () => getDatabase().listDeletedDocuments());
   registerIpcHandler('folders:list', () => getDatabase().listFolders());

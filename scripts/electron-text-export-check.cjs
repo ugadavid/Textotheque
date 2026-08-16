@@ -48,7 +48,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('library:get-info', () => ({
     path: 'C:\\temporary\\text-export.sqlite', fileName: 'text-export.sqlite',
-    applicationId: 1413830735, userVersion: 3, isTextotheque: true,
+    applicationId: 1413830735, userVersion: 4, isTextotheque: true,
   }));
   ipcMain.handle('library:get-startup-notice', () => null);
   ipcMain.handle('library:backup', () => ({ canceled: true, path: null, fileName: null, error: null }));

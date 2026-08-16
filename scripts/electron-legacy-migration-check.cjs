@@ -101,6 +101,8 @@ function inspectCurrentSchema(dbPath, expectedVersion, expectedApplicationId) {
     folderColumns: new Set(inspectDb.pragma('table_info(folders)').map((column) => column.name)),
     documentIndexes: new Set(inspectDb.pragma('index_list(documents)').map((index) => index.name)),
     folderIndexes: new Set(inspectDb.pragma('index_list(folders)').map((index) => index.name)),
+    ftsColumns: new Set(inspectDb.pragma('table_info(documents_fts)').map((column) => column.name)),
+    triggers: new Set(inspectDb.prepare(`SELECT name FROM sqlite_master WHERE type = 'trigger'`).all().map((trigger) => trigger.name)),
   }));
 
   assert(schema.version === expectedVersion, `La version finale attendue est ${expectedVersion}, pas ${schema.version}.`);
@@ -124,6 +126,12 @@ function inspectCurrentSchema(dbPath, expectedVersion, expectedApplicationId) {
     assert(schema.documentIndexes.has(index), `L index ${index} est absent.`);
   }
   assert(schema.folderIndexes.has('idx_folders_parent_id'), 'L index idx_folders_parent_id est absent.');
+  for (const column of ['title', 'content', 'notes']) {
+    assert(schema.ftsColumns.has(column), `La colonne FTS ${column} est absente.`);
+  }
+  for (const trigger of ['documents_fts_after_insert', 'documents_fts_after_delete', 'documents_fts_after_text_update']) {
+    assert(schema.triggers.has(trigger), `Le trigger ${trigger} est absent.`);
+  }
 }
 
 function exerciseMigratedDocument(db, title, expectedContent) {
@@ -154,6 +162,11 @@ function exerciseMigratedDocument(db, title, expectedContent) {
   });
   assert(foldered.folder_id === folder.id, `Le document ${title} ne peut pas utiliser les dossiers apres migration.`);
   assert(db.listFolders().some((candidate) => candidate.id === folder.id), 'Le dossier cree est absent de la liste.');
+  const searchResults = db.searchDocuments({
+    query: 'conserve', fields: ['content'], matchMode: 'all', createdPeriod: 'all', sortBy: 'relevance', direction: 'asc',
+  });
+  assert(searchResults.some((candidate) => candidate.id === document.id), `Le document ${title} n est pas indexe apres migration.`);
+  db.verifyFullTextIndex();
 }
 
 function testFreshDatabase(createTextothequeDatabase, currentVersion, applicationId) {
@@ -244,7 +257,7 @@ app
     try {
       const { createTextothequeDatabase, CURRENT_SCHEMA_VERSION, TEXTOTHEQUE_APPLICATION_ID } = await import('../dist-electron/database.js');
 
-      assert(CURRENT_SCHEMA_VERSION === 3, 'Le test legacy doit etre synchronise avec le schema courant v3.');
+      assert(CURRENT_SCHEMA_VERSION === 4, 'Le test legacy doit etre synchronise avec le schema courant v4.');
       assert(TEXTOTHEQUE_APPLICATION_ID === 1413830735, 'L application_id Textotheque definitif a change.');
       testFreshDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION, TEXTOTHEQUE_APPLICATION_ID);
       testPreTrashLegacyDatabase(createTextothequeDatabase, CURRENT_SCHEMA_VERSION, TEXTOTHEQUE_APPLICATION_ID);

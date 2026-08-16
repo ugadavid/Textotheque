@@ -137,8 +137,10 @@ PRAGMA user_version
 État courant :
 
 ```text
-schema version = 3
+schema version = 4
 ```
+
+Depuis le schéma 4, la recherche documentaire utilise une table FTS5 external-content `documents_fts`. Elle indexe `documents.title`, `documents.content` et `documents.notes` avec le tokenizer CI_AI fixe `unicode61 remove_diacritics 2`. `documents` reste la source de vérité ; trois triggers synchronisent les insertions, les changements textuels réels et les suppressions physiques. La migration 3 → 4 reconstruit une fois l’index existant et vérifie sa cohérence avec la table externe.
 
 Le numéro de schéma évolue uniquement lorsque la structure ou le contrat persistant exige une migration.
 

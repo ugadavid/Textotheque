@@ -1,4 +1,4 @@
--- Snapshot documentaire du schema SQLite courant (user_version = 3).
+-- Snapshot documentaire du schema SQLite courant (user_version = 4).
 -- La source canonique executee et les migrations versionnees vivent dans
 -- electron/database.ts. Ce fichier n'est pas charge par l'application.
 -- Les ecritures applicatives fournissent des timestamps ISO UTC explicites ; les defaults SQL restent des filets de secours.
@@ -37,3 +37,36 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_special_role_unique
 ON documents(special_role)
 WHERE special_role IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_folders_parent_id ON folders(parent_id);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+  title,
+  content,
+  notes,
+  content='documents',
+  content_rowid='id',
+  tokenize='unicode61 remove_diacritics 2'
+);
+
+CREATE TRIGGER IF NOT EXISTS documents_fts_after_insert
+AFTER INSERT ON documents
+BEGIN
+  INSERT INTO documents_fts(rowid, title, content, notes)
+  VALUES (new.id, new.title, new.content, new.notes);
+END;
+
+CREATE TRIGGER IF NOT EXISTS documents_fts_after_delete
+AFTER DELETE ON documents
+BEGIN
+  INSERT INTO documents_fts(documents_fts, rowid, title, content, notes)
+  VALUES ('delete', old.id, old.title, old.content, old.notes);
+END;
+
+CREATE TRIGGER IF NOT EXISTS documents_fts_after_text_update
+AFTER UPDATE OF title, content, notes ON documents
+WHEN old.title IS NOT new.title OR old.content IS NOT new.content OR old.notes IS NOT new.notes
+BEGIN
+  INSERT INTO documents_fts(documents_fts, rowid, title, content, notes)
+  VALUES ('delete', old.id, old.title, old.content, old.notes);
+  INSERT INTO documents_fts(rowid, title, content, notes)
+  VALUES (new.id, new.title, new.content, new.notes);
+END;

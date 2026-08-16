@@ -54,7 +54,7 @@ app
       } = await import('../dist-electron/database.js');
       const { ActiveLibraryManager } = await import('../dist-electron/library-manager.js');
 
-      assert(CURRENT_SCHEMA_VERSION === 3, 'CURRENT_SCHEMA_VERSION doit etre a 3.');
+      assert(CURRENT_SCHEMA_VERSION === 4, 'CURRENT_SCHEMA_VERSION doit etre a 4.');
       assert(TEXTOTHEQUE_APPLICATION_ID === 1413830735, 'L application_id TEXO definitif a change.');
 
       const freshPath = databasePath('fresh');
@@ -114,6 +114,14 @@ app
         assert(backupTodo.special_role === 'todo', 'Le role du TODO manque dans le backup.');
         assert(backupTodo.content === 'Contenu TODO dans le snapshot.', 'Le contenu du TODO manque dans le backup.');
         assert(backupFolders.length === 2, 'Les dossiers ne sont pas complets dans le backup.');
+      });
+      withDatabase(createTextothequeDatabase(backupPath), (searchableBackup) => {
+        const results = searchableBackup.searchDocuments({
+          query: 'snapshot', fields: ['title', 'content', 'notes'], matchMode: 'all',
+          createdPeriod: 'all', sortBy: 'relevance', direction: 'asc',
+        });
+        assert(results.some((item) => item.id === savedDocument.id), 'Le backup ne conserve pas la recherche FTS.');
+        searchableBackup.verifyFullTextIndex();
       });
 
       assert(sourceDb.getLibraryInfo().path === path.resolve(freshPath), 'Le backup a change la bibliotheque active.');
@@ -347,6 +355,13 @@ app
       assert(oldSchemaOpen.status === 'opened' && oldSchemaOpen.backupPath, 'Le schema v0 approuve ne s ouvre pas avec backup.');
       assert(oldSchemaOpen.library.userVersion === CURRENT_SCHEMA_VERSION, 'Le schema v0 n atteint pas la version courante.');
       assert(oldSchemaManager.getDatabase().listDocuments()[0].content === 'Contenu a migrer avec accord.', 'La migration v0 a perdu le contenu.');
+      assert(
+        oldSchemaManager.getDatabase().searchDocuments({
+          query: 'migrer', fields: ['content'], matchMode: 'all', createdPeriod: 'all', sortBy: 'relevance', direction: 'asc',
+        }).length === 1,
+        'La migration externe approuvee n a pas construit FTS.'
+      );
+      oldSchemaManager.getDatabase().verifyFullTextIndex();
       const oldSchemaBackup = inspectTextothequeLibrary(oldSchemaOpen.backupPath);
       assert(oldSchemaBackup.userVersion === 0 && oldSchemaBackup.compatibility === 'legacy-textotheque', 'Le backup v0 ne preserve pas l etat pre-migration.');
       oldSchemaManager.close();

@@ -13,6 +13,10 @@ export type CatalogSortField =
   | 'created_at'
   | 'updated_at';
 export type CatalogSortDirection = 'asc' | 'desc';
+export type SearchTextField = 'title' | 'content' | 'notes';
+export type SearchMatchMode = 'all' | 'any' | 'phrase';
+export type CreatedPeriod = 'all' | 'last7days' | 'last15days' | 'last30days' | 'thisYear';
+export type SearchSortField = 'relevance' | CatalogSortField;
 
 export interface DocumentCatalogOptions {
   sortBy: CatalogSortField;
@@ -29,6 +33,20 @@ export interface CatalogDocument {
   createdAt: string;
   updatedAt: string;
   specialRole: SpecialDocumentRole | null;
+}
+
+export interface SearchDocument extends CatalogDocument {
+  snippet: string | null;
+  relevance: number | null;
+}
+
+export interface SearchDocumentsOptions {
+  query: string;
+  fields: SearchTextField[];
+  matchMode: SearchMatchMode;
+  createdPeriod: CreatedPeriod;
+  sortBy: SearchSortField;
+  direction: CatalogSortDirection;
 }
 
 export interface TextDocument {
@@ -65,9 +83,11 @@ export interface DocumentInput {
   folder_id: number | null;
 }
 
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 export const TEXTOTHEQUE_APPLICATION_ID = 0x5445584f;
 export const MAX_AUTOMATIC_DOCUMENTS_PER_DAY = 99;
+export const SEARCH_SNIPPET_START = '\uE000';
+export const SEARCH_SNIPPET_END = '\uE001';
 
 export type LibraryCompatibility = 'compatible' | 'legacy-textotheque' | 'too-new' | 'foreign' | 'invalid';
 
@@ -105,6 +125,57 @@ function nowIso(date = new Date()): string {
   return date.toISOString();
 }
 
+export function quoteFts5Value(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+export function createdPeriodStartIso(period: CreatedPeriod, referenceDate = new Date()): string | null {
+  if (period === 'all') return null;
+  const start = new Date(referenceDate);
+  start.setHours(0, 0, 0, 0);
+  if (period === 'thisYear') {
+    start.setMonth(0, 1);
+    return start.toISOString();
+  }
+  const dayCounts: Record<Exclude<CreatedPeriod, 'all' | 'thisYear'>, number> = {
+    last7days: 7,
+    last15days: 15,
+    last30days: 30,
+  };
+  if (!Object.prototype.hasOwnProperty.call(dayCounts, period)) {
+    throw new Error(`Période de création inconnue: ${String(period)}.`);
+  }
+  start.setDate(start.getDate() - (dayCounts[period as keyof typeof dayCounts] - 1));
+  return start.toISOString();
+}
+
+export function buildSafeFtsQuery(query: string, fields: SearchTextField[], matchMode: SearchMatchMode): string {
+  const fieldNames: Record<SearchTextField, string> = {
+    title: 'title',
+    content: 'content',
+    notes: 'notes',
+  };
+  const uniqueFields = [...new Set(fields)];
+  if (uniqueFields.length === 0) {
+    throw new Error('Choisissez au moins une zone de recherche.');
+  }
+  if (uniqueFields.some((field) => !Object.prototype.hasOwnProperty.call(fieldNames, field))) {
+    throw new Error('Zone de recherche inconnue.');
+  }
+  if (!['all', 'any', 'phrase'].includes(matchMode)) {
+    throw new Error(`Mode de correspondance inconnu: ${String(matchMode)}.`);
+  }
+  const selectedColumns = uniqueFields.map((field) => fieldNames[field]).join(' ');
+  const trimmedQuery = query.trim();
+  const expression = matchMode === 'phrase'
+    ? quoteFts5Value(trimmedQuery)
+    : trimmedQuery
+        .split(/\s+/u)
+        .map((term) => `${quoteFts5Value(term)}*`)
+        .join(matchMode === 'all' ? ' AND ' : matchMode === 'any' ? ' OR ' : '');
+  return `{${selectedColumns}} : (${expression})`;
+}
+
 export function localDocumentTitleDate(date: Date): string {
   return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
 }
@@ -114,6 +185,41 @@ export function isAutomaticDocumentTitle(title: string): boolean {
 }
 
 // Application writes timestamps explicitly through nowIso(); SQL defaults are fallback only.
+const fullTextSchema = `
+CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+  title,
+  content,
+  notes,
+  content='documents',
+  content_rowid='id',
+  tokenize='unicode61 remove_diacritics 2'
+);
+
+CREATE TRIGGER IF NOT EXISTS documents_fts_after_insert
+AFTER INSERT ON documents
+BEGIN
+  INSERT INTO documents_fts(rowid, title, content, notes)
+  VALUES (new.id, new.title, new.content, new.notes);
+END;
+
+CREATE TRIGGER IF NOT EXISTS documents_fts_after_delete
+AFTER DELETE ON documents
+BEGIN
+  INSERT INTO documents_fts(documents_fts, rowid, title, content, notes)
+  VALUES ('delete', old.id, old.title, old.content, old.notes);
+END;
+
+CREATE TRIGGER IF NOT EXISTS documents_fts_after_text_update
+AFTER UPDATE OF title, content, notes ON documents
+WHEN old.title IS NOT new.title OR old.content IS NOT new.content OR old.notes IS NOT new.notes
+BEGIN
+  INSERT INTO documents_fts(documents_fts, rowid, title, content, notes)
+  VALUES ('delete', old.id, old.title, old.content, old.notes);
+  INSERT INTO documents_fts(rowid, title, content, notes)
+  VALUES (new.id, new.title, new.content, new.notes);
+END;
+`;
+
 const currentSchema = `
 CREATE TABLE IF NOT EXISTS documents (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -144,7 +250,8 @@ CREATE TABLE IF NOT EXISTS folders (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_special_role_unique
 ON documents(special_role)
 WHERE special_role IS NOT NULL;
-`;
+
+${fullTextSchema}`;
 
 interface SchemaMigration {
   version: number;
@@ -165,6 +272,10 @@ function columnExists(db: Database.Database, tableName: string, columnName: stri
 
 function indexExists(db: Database.Database, indexName: string): boolean {
   return Boolean(db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?`).get(indexName));
+}
+
+function triggerExists(db: Database.Database, triggerName: string): boolean {
+  return Boolean(db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?`).get(triggerName));
 }
 
 const legacyDocumentColumns = [
@@ -210,6 +321,26 @@ function inferKnownTextothequeSchemaVersion(db: Database.Database): number | nul
   const documentColumnsV1 = [...legacyDocumentColumns, 'deleted_at'];
   const documentColumnsV2 = [...legacyDocumentColumns, 'deleted_at', 'folder_id'];
   const documentColumnsV3 = [...documentColumnsV2, 'special_role'];
+
+  if (
+    hasOnlyHistoricalTables(db, [
+      'documents',
+      'documents_fts',
+      'documents_fts_config',
+      'documents_fts_data',
+      'documents_fts_docsize',
+      'documents_fts_idx',
+      'folders',
+    ]) &&
+    hasExactColumns(db, 'documents', documentColumnsV3) &&
+    hasExactColumns(db, 'folders', currentFolderColumns) &&
+    indexExists(db, 'idx_documents_special_role_unique') &&
+    triggerExists(db, 'documents_fts_after_insert') &&
+    triggerExists(db, 'documents_fts_after_delete') &&
+    triggerExists(db, 'documents_fts_after_text_update')
+  ) {
+    return 4;
+  }
 
   if (
     hasOnlyHistoricalTables(db, ['documents', 'folders']) &&
@@ -463,6 +594,15 @@ const schemaMigrations: SchemaMigration[] = [
       );
     },
   },
+  {
+    version: 4,
+    name: 'add external-content FTS5 document index',
+    migrate: (db) => {
+      db.exec(fullTextSchema);
+      db.prepare(`INSERT INTO documents_fts(documents_fts) VALUES ('rebuild')`).run();
+      db.prepare(`INSERT INTO documents_fts(documents_fts, rank) VALUES ('integrity-check', 1)`).run();
+    },
+  },
 ];
 
 export class TextothequeDatabase {
@@ -559,6 +699,19 @@ export class TextothequeDatabase {
     const hasSpecialRole = columnExists(this.db, 'documents', 'special_role');
     const hasFolders = tableExists(this.db, 'folders');
 
+    if (
+      hasDeletedAt &&
+      hasFolderId &&
+      hasSpecialRole &&
+      hasFolders &&
+      tableExists(this.db, 'documents_fts') &&
+      triggerExists(this.db, 'documents_fts_after_insert') &&
+      triggerExists(this.db, 'documents_fts_after_delete') &&
+      triggerExists(this.db, 'documents_fts_after_text_update')
+    ) {
+      return 4;
+    }
+
     if (hasDeletedAt && hasFolderId && hasSpecialRole && hasFolders) {
       return 3;
     }
@@ -608,6 +761,18 @@ export class TextothequeDatabase {
     if (version >= 3 && !columnExists(this.db, 'documents', 'special_role')) {
       missingStructures.push('documents.special_role');
     }
+    if (version >= 4 && !tableExists(this.db, 'documents_fts')) {
+      missingStructures.push('documents_fts');
+    }
+    if (version >= 4 && !triggerExists(this.db, 'documents_fts_after_insert')) {
+      missingStructures.push('documents_fts_after_insert');
+    }
+    if (version >= 4 && !triggerExists(this.db, 'documents_fts_after_delete')) {
+      missingStructures.push('documents_fts_after_delete');
+    }
+    if (version >= 4 && !triggerExists(this.db, 'documents_fts_after_text_update')) {
+      missingStructures.push('documents_fts_after_text_update');
+    }
 
     if (missingStructures.length > 0) {
       throw new Error(
@@ -629,6 +794,16 @@ export class TextothequeDatabase {
     }
     if (!columnExists(this.db, 'documents', 'special_role')) {
       missingStructures.push('documents.special_role');
+    }
+    if (!tableExists(this.db, 'documents_fts')) {
+      missingStructures.push('documents_fts');
+    }
+    for (const triggerName of [
+      'documents_fts_after_insert',
+      'documents_fts_after_delete',
+      'documents_fts_after_text_update',
+    ]) {
+      if (!triggerExists(this.db, triggerName)) missingStructures.push(triggerName);
     }
 
     if (missingStructures.length > 0) {
@@ -749,6 +924,96 @@ export class TextothequeDatabase {
       .all() as Array<Omit<CatalogDocument, 'favorite'> & { favorite: number }>;
 
     return rows.map((row) => ({ ...row, favorite: row.favorite === 1 }));
+  }
+
+  searchDocuments(options: SearchDocumentsOptions, referenceDate = new Date()): SearchDocument[] {
+    const trimmedQuery = options?.query?.trim() ?? '';
+    const createdAfter = createdPeriodStartIso(options?.createdPeriod, referenceDate);
+    const sqlDirection = options?.direction === 'asc'
+      ? 'ASC'
+      : options?.direction === 'desc'
+        ? 'DESC'
+        : null;
+    if (!sqlDirection) {
+      throw new Error(`Direction de tri recherche inconnue: ${String(options?.direction)}.`);
+    }
+
+    const sortExpressions: Record<CatalogSortField, string[]> = {
+      title: ['d.title COLLATE NOCASE'],
+      folder: ['f.name IS NULL', 'f.name COLLATE NOCASE'],
+      status: ['d.status COLLATE NOCASE'],
+      favorite: ['d.favorite'],
+      created_at: ['d.created_at'],
+      updated_at: ['d.updated_at'],
+    };
+    const sortBy = options?.sortBy;
+    if (sortBy !== 'relevance' && !Object.prototype.hasOwnProperty.call(sortExpressions, sortBy)) {
+      throw new Error(`Champ de tri recherche inconnu: ${String(sortBy)}.`);
+    }
+    if (!trimmedQuery && sortBy === 'relevance') {
+      throw new Error('Le tri par pertinence nécessite une recherche textuelle.');
+    }
+    const orderBy = sortBy === 'relevance'
+      ? 'relevance ASC, d.id ASC'
+      : [
+          ...sortExpressions[sortBy as CatalogSortField].map((expression) => `${expression} ${sqlDirection}`),
+          `d.id ${sqlDirection}`,
+        ].join(', ');
+    const createdClause = createdAfter ? 'AND d.created_at >= @createdAfter' : '';
+
+    if (!trimmedQuery) {
+      const rows = this.db.prepare(
+        `SELECT d.id AS id,
+                d.title AS title,
+                d.folder_id AS folderId,
+                f.name AS folderName,
+                d.status AS status,
+                d.favorite AS favorite,
+                d.created_at AS createdAt,
+                d.updated_at AS updatedAt,
+                d.special_role AS specialRole,
+                NULL AS snippet,
+                NULL AS relevance
+         FROM documents d
+         LEFT JOIN folders f ON f.id = d.folder_id
+         WHERE d.deleted_at IS NULL
+         ${createdClause}
+         ORDER BY ${orderBy}`
+      ).all(createdAfter ? { createdAfter } : {}) as Array<Omit<SearchDocument, 'favorite'> & { favorite: number }>;
+      return rows.map((row) => ({ ...row, favorite: row.favorite === 1 }));
+    }
+
+    const ftsQuery = buildSafeFtsQuery(trimmedQuery, options.fields, options.matchMode);
+    const rows = this.db.prepare(
+      `SELECT d.id AS id,
+              d.title AS title,
+              d.folder_id AS folderId,
+              f.name AS folderName,
+              d.status AS status,
+              d.favorite AS favorite,
+              d.created_at AS createdAt,
+              d.updated_at AS updatedAt,
+              d.special_role AS specialRole,
+              snippet(documents_fts, -1, @snippetStart, @snippetEnd, '…', 24) AS snippet,
+              bm25(documents_fts) AS relevance
+       FROM documents_fts
+       JOIN documents d ON d.id = documents_fts.rowid
+       LEFT JOIN folders f ON f.id = d.folder_id
+       WHERE documents_fts MATCH @ftsQuery
+         AND d.deleted_at IS NULL
+         ${createdClause}
+       ORDER BY ${orderBy}`
+    ).all({
+      ftsQuery,
+      snippetStart: SEARCH_SNIPPET_START,
+      snippetEnd: SEARCH_SNIPPET_END,
+      ...(createdAfter ? { createdAfter } : {}),
+    }) as Array<Omit<SearchDocument, 'favorite'> & { favorite: number }>;
+    return rows.map((row) => ({ ...row, favorite: row.favorite === 1 }));
+  }
+
+  verifyFullTextIndex(): void {
+    this.db.prepare(`INSERT INTO documents_fts(documents_fts, rank) VALUES ('integrity-check', 1)`).run();
   }
 
   listDeletedDocuments(): TextDocument[] {

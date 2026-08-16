@@ -39,10 +39,18 @@ import {
 } from './services/library';
 import { exportTextDocument, setDocumentExportAvailable } from './services/text-export';
 import { listDocumentCatalog } from './services/catalog';
+import { searchDocuments } from './services/search';
 import type { CatalogDocument, CatalogSortField, DocumentCatalogOptions } from './types/catalog';
 import type { DocumentInput, DocumentStatus, Folder, TextDocument } from './types/document';
 import type { LibraryInfo, LibraryInspection, LibraryMenuAction, LibraryOpenResult } from './types/library';
 import type { TextExportDraft } from './types/text-export';
+import type {
+  CreatedPeriod,
+  SearchDocument,
+  SearchMatchMode,
+  SearchSortField,
+  SearchTextField,
+} from './types/search';
 
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 type LibraryBackupState = 'idle' | 'saving' | 'success';
@@ -57,6 +65,7 @@ const PANE_LAYOUT_STORAGE_KEY = 'textotheque:pane-layout:v2';
 const EXPANDED_FOLDERS_STORAGE_KEY = 'textotheque:expanded-folders:v2';
 const UNTITLED_FALLBACK = 'Sans titre';
 const AUTOSAVE_DELAY_MS = 1500;
+const SEARCH_DEBOUNCE_MS = 250;
 
 interface DocumentSaveSnapshot {
   requestContext: number;
@@ -168,6 +177,16 @@ export default function App() {
   const [paneLayout, setPaneLayout] = useState<PaneLayout>(() => loadPaneLayout());
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchFields, setSearchFields] = useState<SearchTextField[]>(['title', 'content', 'notes']);
+  const [searchMatchMode, setSearchMatchMode] = useState<SearchMatchMode>('all');
+  const [createdPeriod, setCreatedPeriod] = useState<CreatedPeriod>('all');
+  const [searchResults, setSearchResults] = useState<SearchDocument[]>([]);
+  const [searchResultsVisible, setSearchResultsVisible] = useState(false);
+  const [advancedSearchExpanded, setAdvancedSearchExpanded] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchValidationMessage, setSearchValidationMessage] = useState<string | null>(null);
+  const [searchSortBy, setSearchSortBy] = useState<SearchSortField>('relevance');
+  const [searchDirection, setSearchDirection] = useState<'asc' | 'desc'>('asc');
   const shellRef = useRef<HTMLElement | null>(null);
   const isDirtyRef = useRef(false);
   const libraryOperationRef = useRef(false);
@@ -179,6 +198,7 @@ export default function App() {
   const latestTextExportRef = useRef<TextExportDraft | null>(null);
   const restoreHiddenNavigationAfterSearchRef = useRef(false);
   const catalogRequestRef = useRef(0);
+  const searchRequestRef = useRef(0);
 
   useEffect(() => {
     void refreshDocuments().catch((loadError: unknown) => {
@@ -248,18 +268,6 @@ export default function App() {
     }
     return documentView === 'all' ? 'Tous les textes' : 'Bibliothèque';
   }, [documentView, selectedFolder]);
-  const visibleDocuments = useMemo(() => {
-    const normalizedSearch = searchQuery.trim().toLocaleLowerCase('fr-FR');
-    if (!normalizedSearch) {
-      return documents;
-    }
-
-    return documents.filter((document) => {
-      const titleValue = (document.title.trim() || UNTITLED_FALLBACK).toLocaleLowerCase('fr-FR');
-      const contentValue = document.content.toLocaleLowerCase('fr-FR');
-      return titleValue.includes(normalizedSearch) || contentValue.includes(normalizedSearch);
-    });
-  }, [documents, searchQuery]);
   const selectedDocumentIsDeleted = Boolean(selectedDocument?.deleted_at);
   const selectedDocumentIsTodo = selectedDocument?.special_role === 'todo';
   const isDirty = Boolean(
@@ -302,6 +310,42 @@ export default function App() {
   useEffect(() => {
     window.localStorage.setItem(PANE_LAYOUT_STORAGE_KEY, JSON.stringify(paneLayout));
   }, [paneLayout]);
+
+  useEffect(() => {
+    if (!searchResultsVisible) return;
+    const requestId = ++searchRequestRef.current;
+    const hasText = searchQuery.trim().length > 0;
+    if (hasText && searchFields.length === 0) {
+      setSearchResults([]);
+      setSearchLoading(false);
+      setSearchValidationMessage('Choisissez au moins une zone de recherche.');
+      return;
+    }
+
+    setSearchValidationMessage(null);
+    setSearchLoading(true);
+    const timer = window.setTimeout(() => {
+      void searchDocuments({
+        query: searchQuery,
+        fields: searchFields,
+        matchMode: searchMatchMode,
+        createdPeriod,
+        sortBy: hasText ? searchSortBy : searchSortBy === 'relevance' ? 'created_at' : searchSortBy,
+        direction: hasText ? searchDirection : searchSortBy === 'relevance' ? 'desc' : searchDirection,
+      }).then((rows) => {
+        if (requestId !== searchRequestRef.current) return;
+        setSearchResults(rows);
+        setError(null);
+      }).catch((searchError: unknown) => {
+        if (requestId !== searchRequestRef.current) return;
+        showOperationError('search-documents', searchError, 'Impossible d’effectuer la recherche.');
+      }).finally(() => {
+        if (requestId === searchRequestRef.current) setSearchLoading(false);
+      });
+    }, SEARCH_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [createdPeriod, searchDirection, searchFields, searchMatchMode, searchQuery, searchResultsVisible, searchSortBy]);
 
   const focusEditor = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -527,7 +571,18 @@ export default function App() {
     }
   }
 
+  function hideSearchResults(): void {
+    searchRequestRef.current += 1;
+    setSearchResultsVisible(false);
+    setSearchLoading(false);
+  }
+
   function handleCatalogSort(sortBy: CatalogSortField): void {
+    if (searchResultsVisible) {
+      setSearchSortBy(sortBy);
+      setSearchDirection(searchSortBy === sortBy && searchDirection === 'asc' ? 'desc' : 'asc');
+      return;
+    }
     const nextOptions: DocumentCatalogOptions = {
       sortBy,
       direction: catalogOptions.sortBy === sortBy && catalogOptions.direction === 'asc' ? 'desc' : 'asc',
@@ -539,6 +594,7 @@ export default function App() {
   async function handleChangeDocumentView(nextView: DocumentView, nextFolderId: number | null = null) {
     if (nextView === 'all') {
       if (catalogVisible && documentView === 'all') return;
+      hideSearchResults();
       setDocumentView('all');
       setSelectedFolderId(null);
       setCatalogVisible(true);
@@ -547,7 +603,7 @@ export default function App() {
       return;
     }
 
-    if (nextView === documentView && nextFolderId === selectedFolderId && !catalogVisible) {
+    if (nextView === documentView && nextFolderId === selectedFolderId && !catalogVisible && !searchResultsVisible) {
       return;
     }
 
@@ -561,6 +617,7 @@ export default function App() {
       setDocumentView(nextView);
       setSelectedFolderId(nextFolderId);
       setCatalogVisible(false);
+      hideSearchResults();
     } catch (loadError: unknown) {
       showOperationError('change-view', loadError, 'Impossible de charger cette vue.');
     }
@@ -593,6 +650,7 @@ export default function App() {
       setDocumentView(targetView);
       setSelectedFolderId(targetFolderId);
       setCatalogVisible(false);
+      hideSearchResults();
     } catch (loadError: unknown) {
       showOperationError('refresh-after-create-document', loadError, 'Document cree, mais actualisation impossible.');
       return;
@@ -603,6 +661,7 @@ export default function App() {
   async function handleOpenTodo() {
     if (selectedDocumentIsTodo) {
       setCatalogVisible(false);
+      hideSearchResults();
       return;
     }
     if (!(await confirmDiscardUnsavedChanges())) {
@@ -631,6 +690,7 @@ export default function App() {
       setDocumentView('all');
       setSelectedFolderId(null);
       setCatalogVisible(false);
+      hideSearchResults();
       focusEditor();
     } catch (loadError: unknown) {
       showOperationError('refresh-after-open-special-todo', loadError, 'TODO ouvert, mais actualisation impossible.');
@@ -660,6 +720,7 @@ export default function App() {
       setDocumentView('folder');
       setSelectedFolderId(folder.id);
       setCatalogVisible(false);
+      hideSearchResults();
     } catch (loadError: unknown) {
       showOperationError('refresh-after-create-folder', loadError, 'Dossier cree, mais actualisation impossible.');
     }
@@ -692,6 +753,7 @@ export default function App() {
         setSelectedFolderId(nextFolderId ?? null);
       }
       setCatalogVisible(false);
+      hideSearchResults();
       return true;
     }
 
@@ -713,6 +775,7 @@ export default function App() {
         setSelectedFolderId(nextFolderId ?? null);
       }
       setCatalogVisible(false);
+      hideSearchResults();
       applyDocument(document);
       try {
         await refreshDocuments(document.id, nextView ?? documentView, nextFolderId ?? selectedFolderId);
@@ -878,6 +941,12 @@ export default function App() {
     setDocuments([]);
     setCatalogDocuments([]);
     setCatalogVisible(false);
+    searchRequestRef.current += 1;
+    setSearchResults([]);
+    setSearchResultsVisible(false);
+    setSearchLoading(false);
+    setSearchValidationMessage(null);
+    setAdvancedSearchExpanded(false);
     setDeletedDocuments([]);
     setFolders([]);
     setDocumentView('navigation');
@@ -891,6 +960,7 @@ export default function App() {
     setFolderId(null);
     setSaveState('idle');
     setSearchQuery('');
+    setCreatedPeriod('all');
     restoreHiddenNavigationAfterSearchRef.current = false;
     window.localStorage.removeItem(EXPANDED_FOLDERS_STORAGE_KEY);
     setLibraryInfo(nextLibrary);
@@ -1092,6 +1162,7 @@ export default function App() {
       setDocumentView('all');
       setSelectedFolderId(null);
       setCatalogVisible(false);
+      hideSearchResults();
     } catch (loadError: unknown) {
       showOperationError('refresh-after-restore-document', loadError, 'Document restaure, mais actualisation impossible.');
       return;
@@ -1124,7 +1195,15 @@ export default function App() {
   }
 
   function clearSearchAndReturnToNavigation() {
+    searchRequestRef.current += 1;
     setSearchQuery('');
+    setCreatedPeriod('all');
+    setSearchResults([]);
+    setSearchResultsVisible(false);
+    setSearchLoading(false);
+    setSearchValidationMessage(null);
+    setAdvancedSearchExpanded(false);
+    setCatalogVisible(false);
     if (!selectedDocument || selectedDocument.deleted_at) {
       setDocumentView('navigation');
       setSelectedFolderId(null);
@@ -1143,12 +1222,17 @@ export default function App() {
   }
 
   function handleSearchChange(value: string) {
-    if (!value.trim() && searchQuery.trim() && restoreHiddenNavigationAfterSearchRef.current) {
+    if (!value.trim() && searchQuery.trim() && createdPeriod === 'all') {
       clearSearchAndReturnToNavigation();
       return;
     }
 
     setSearchQuery(value);
+    setSearchSortBy(value.trim() ? 'relevance' : 'created_at');
+    setSearchDirection(value.trim() ? 'asc' : 'desc');
+    setSearchResultsVisible(Boolean(value.trim() || createdPeriod !== 'all'));
+    setAdvancedSearchExpanded(Boolean(value.trim() || createdPeriod !== 'all'));
+    setCatalogVisible(false);
     if (value.trim()) {
       setPaneLayout((current) => {
         if (current.leftVisible) {
@@ -1157,6 +1241,55 @@ export default function App() {
         restoreHiddenNavigationAfterSearchRef.current = true;
         return { ...current, leftVisible: true };
       });
+    }
+  }
+
+  function showAdvancedSearch(): void {
+    setAdvancedSearchExpanded(true);
+    setSearchResultsVisible(true);
+    setCatalogVisible(false);
+    if (!searchQuery.trim()) {
+      setSearchSortBy('created_at');
+      setSearchDirection('desc');
+    }
+  }
+
+  function toggleAdvancedSearch(): void {
+    if (!searchResultsVisible) {
+      showAdvancedSearch();
+      return;
+    }
+    setAdvancedSearchExpanded((current) => !current);
+  }
+
+  function handleSearchFieldChange(field: SearchTextField, checked: boolean): void {
+    setSearchFields((current) => checked
+      ? [...new Set([...current, field])]
+      : current.filter((candidate) => candidate !== field));
+    if (searchQuery.trim()) {
+      setSearchSortBy('relevance');
+      setSearchDirection('asc');
+    }
+  }
+
+  function handleSearchMatchModeChange(mode: SearchMatchMode): void {
+    setSearchMatchMode(mode);
+    if (searchQuery.trim()) {
+      setSearchSortBy('relevance');
+      setSearchDirection('asc');
+    }
+  }
+
+  function handleCreatedPeriodChange(period: CreatedPeriod): void {
+    setCreatedPeriod(period);
+    setSearchResultsVisible(Boolean(searchQuery.trim() || period !== 'all' || advancedSearchExpanded));
+    setCatalogVisible(false);
+    if (searchQuery.trim()) {
+      setSearchSortBy('relevance');
+      setSearchDirection('asc');
+    } else {
+      setSearchSortBy('created_at');
+      setSearchDirection('desc');
     }
   }
 
@@ -1201,7 +1334,7 @@ export default function App() {
           return;
         }
 
-        if (searchQuery.trim().length > 0) {
+        if (searchQuery.trim().length > 0 || createdPeriod !== 'all' || searchResultsVisible) {
           event.preventDefault();
           clearSearchAndReturnToNavigation();
         }
@@ -1277,7 +1410,6 @@ export default function App() {
       >
         {paneLayout.leftVisible ? <NavigationPane
           key={libraryInfo?.path ?? 'loading-library'}
-          searchResults={visibleDocuments}
           allDocuments={documents}
           deletedDocuments={deletedDocuments}
           folders={folders}
@@ -1287,7 +1419,6 @@ export default function App() {
           unfiledCount={unfiledCount}
           folderDocumentCounts={folderDocumentCounts}
           trashCount={deletedDocuments.length}
-          searchQuery={searchQuery}
           selectedDocumentId={selectedDocument?.id ?? null}
           dirtyDocumentId={isDirty ? selectedDocument?.id ?? null : null}
           onViewChange={handleChangeDocumentView}
@@ -1303,17 +1434,30 @@ export default function App() {
           aria-label="Redimensionner le volet gauche"
           onPointerDown={(event) => startPaneResize('left', event)}
         /> : null}
-        {catalogVisible ? <DocumentCatalog
-          documents={catalogDocuments}
-          sortBy={catalogOptions.sortBy}
-          direction={catalogOptions.direction}
+        {searchResultsVisible || catalogVisible ? <DocumentCatalog
+          documents={searchResultsVisible ? searchResults : catalogDocuments}
+          sortBy={searchResultsVisible ? searchSortBy : catalogOptions.sortBy}
+          direction={searchResultsVisible ? searchDirection : catalogOptions.direction}
           selectedDocumentId={selectedDocument?.id ?? null}
-          loading={catalogLoading}
+          loading={searchResultsVisible ? searchLoading : catalogLoading}
           error={error}
           searchQuery={searchQuery}
           navigationVisible={paneLayout.leftVisible}
           metadataVisible={paneLayout.rightVisible}
           isTodo={selectedDocumentIsTodo}
+          title={searchResultsVisible ? 'Résultats de recherche' : 'Tous les textes'}
+          eyebrow={searchResultsVisible ? 'Recherche' : 'Bibliothèque'}
+          searchControls={{
+            expanded: advancedSearchExpanded,
+            fields: searchFields,
+            matchMode: searchMatchMode,
+            createdPeriod,
+            validationMessage: searchValidationMessage,
+            onToggleExpanded: toggleAdvancedSearch,
+            onFieldChange: handleSearchFieldChange,
+            onMatchModeChange: handleSearchMatchModeChange,
+            onCreatedPeriodChange: handleCreatedPeriodChange,
+          }}
           onSort={handleCatalogSort}
           onOpenDocument={(id) => { void handleSelectDocument(id, 'all', null); }}
           onSearchChange={handleSearchChange}
@@ -1331,6 +1475,7 @@ export default function App() {
           notice={libraryNotice}
           isDeleted={selectedDocumentIsDeleted}
           isTodo={selectedDocumentIsTodo}
+          advancedSearchActive={Boolean(searchQuery.trim() || createdPeriod !== 'all')}
           searchQuery={searchQuery}
           onTitleChange={(value) => {
             setTitle(value);
@@ -1345,6 +1490,7 @@ export default function App() {
           onToggleNavigation={toggleNavigationPane}
           onToggleMetadata={toggleMetadataPane}
           onOpenTodo={handleOpenTodo}
+          onOpenAdvancedSearch={showAdvancedSearch}
           onSearchChange={handleSearchChange}
           onClearSearch={clearSearchAndReturnToNavigation}
           onSave={handleSave}
@@ -1387,8 +1533,9 @@ export default function App() {
       </main>
       <StatusBar
         totalDocuments={currentDocuments.length}
-        visibleDocuments={searchQuery.trim() ? visibleDocuments.length : currentDocuments.length}
+        visibleDocuments={searchResultsVisible ? searchResults.length : currentDocuments.length}
         searchQuery={searchQuery}
+        searchActive={searchResultsVisible}
         currentView={documentView}
         contextLabel={viewContextLabel}
         trashCount={deletedDocuments.length}

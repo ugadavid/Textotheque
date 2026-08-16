@@ -71,11 +71,12 @@ let libraryInspectInvocations = 0;
 let libraryOpenInvocations = 0;
 let specialDocumentInvocations = 0;
 const catalogRequests = [];
+const searchRequests = [];
 let libraryInfo = {
   path: 'C:\\temporary\\test-ui.sqlite',
   fileName: 'test-ui.sqlite',
   applicationId: 1413830735,
-  userVersion: 3,
+  userVersion: 4,
   isTextotheque: true,
 };
 const forcedFailureCounts = new Map();
@@ -120,7 +121,7 @@ app
       if (libraryInspectInvocations === 1) event.sender.send('library:menu-action', { action: 'known', path: candidatePath });
       return {
         status: 'compatible',
-        inspection: { path: candidatePath, fileName: path.basename(candidatePath), readable: true, applicationId: 1413830735, userVersion: 3, isTextotheque: true, compatibility: 'compatible' },
+        inspection: { path: candidatePath, fileName: path.basename(candidatePath), readable: true, applicationId: 1413830735, userVersion: 4, isTextotheque: true, compatibility: 'compatible' },
         library: null,
         backupPath: null,
       };
@@ -186,6 +187,43 @@ app
           const comparison = String(leftValue ?? '').localeCompare(String(rightValue ?? ''), 'fr', { sensitivity: 'base' });
           return comparison === 0 ? (left.id - right.id) * direction : comparison * direction;
         });
+    });
+    ipcMain.handle('documents:search', async (_event, options) => {
+      rejectIfForced('documents:search');
+      searchRequests.push(JSON.parse(JSON.stringify(options)));
+      if (options.query.toLocaleLowerCase('fr-FR') === 'premier lent') {
+        await new Promise((resolve) => setTimeout(resolve, 450));
+      }
+      if (options.query.toLocaleLowerCase('fr-FR') === 'deuxieme rapide') {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      if (options.query.toLocaleLowerCase('fr-FR') === 'ancienne recherche') {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      const normalize = (value) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('fr-FR');
+      const query = normalize(options.query.trim()).replace(/ (lent|rapide)$/u, '');
+      const tokens = query.split(/\s+/).filter(Boolean);
+      const folderName = (document) => folders.find((folder) => folder.id === document.folder_id)?.name ?? null;
+      const matches = (document) => {
+        if (!query) return true;
+        const haystack = options.fields.map((field) => normalize(field === 'notes' ? document.notes : document[field])).join(' ');
+        if (options.matchMode === 'phrase') return haystack.includes(query);
+        if (options.matchMode === 'any') return tokens.some((token) => haystack.includes(token));
+        return tokens.every((token) => haystack.includes(token));
+      };
+      return documents.filter((document) => !document.deleted_at && matches(document)).map((document) => ({
+        id: document.id,
+        title: document.title,
+        folderId: document.folder_id,
+        folderName: folderName(document),
+        status: document.status,
+        favorite: Boolean(document.favorite),
+        createdAt: document.created_at,
+        updatedAt: document.updated_at,
+        specialRole: document.special_role ?? null,
+        snippet: query ? `\uE000${options.query}\uE001 — extrait` : null,
+        relevance: query ? -1 : null,
+      }));
     });
     ipcMain.handle('documents:list-deleted', () => {
       rejectIfForced('documents:list-deleted');
@@ -421,6 +459,11 @@ app
         };
         const folderTreeText = () => document.querySelector('.folder-section')?.textContent ?? '';
         const unfiledTreeText = () => document.querySelector('.unfiled-tree-section')?.textContent ?? '';
+        const setSearch = (value) => {
+          const input = document.querySelector('.search-input-row input');
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        };
 
         await waitFor(() => document.querySelectorAll('.document-item').length >= 2, 'documents loaded');
         await waitFor(() => document.querySelector('.status-bar')?.textContent.includes('2 documents'), 'status total documents');
@@ -450,7 +493,7 @@ app
         }
         const viewButtons = document.querySelectorAll('.nav-view-button');
         if (viewButtons.length !== 2) throw new Error('document view buttons missing');
-        if (expectedAppVersion !== '0.1.24') throw new Error('unexpected application version');
+        if (expectedAppVersion !== '0.1.25') throw new Error('unexpected application version');
         const initialExpandedState = JSON.parse(window.localStorage.getItem('textotheque:expanded-folders:v2') ?? '[]');
         if (initialExpandedState.length !== 0) throw new Error('folders should be closed by default');
         await waitFor(() => window.localStorage.getItem('textotheque:pane-layout:v2'), 'pane layout stored');
@@ -517,11 +560,23 @@ app
           throw new Error('pane toggles should preserve compact widths');
         }
 
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
-          .set.call(searchInput, 'ancien');
-        searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-        await waitFor(() => document.querySelectorAll('.document-item').length === 0, 'active search excludes trash');
-        if (searchInput.type !== 'text' || document.querySelectorAll('.clear-search-button').length !== 1) {
+        setSearch('ancien');
+        await waitFor(() => document.querySelector('.document-catalog') && document.querySelectorAll('.catalog-row').length === 0, 'active search excludes trash');
+        const advancedPanel = document.querySelector('.advanced-search-panel');
+        if (!advancedPanel || advancedPanel.querySelectorAll('input[type="checkbox"]:checked').length !== 3 ||
+            !advancedPanel.querySelector('input[type="radio"][value="all"]:checked')) {
+          throw new Error('default advanced search criteria are incorrect');
+        }
+        const fieldCheckboxes = Array.from(advancedPanel.querySelectorAll('input[type="checkbox"]'));
+        fieldCheckboxes.forEach((checkbox) => checkbox.click());
+        await waitFor(() => document.querySelector('.search-validation-message')?.textContent.includes('au moins une zone'), 'no search field validation');
+        fieldCheckboxes.forEach((checkbox) => checkbox.click());
+        await waitFor(() => !document.querySelector('.search-validation-message'), 'search fields restored');
+        advancedPanel.querySelector('input[type="radio"][value="any"]').click();
+        await waitFor(() => advancedPanel.querySelector('input[type="radio"][value="any"]:checked'), 'any match mode selected');
+        await new Promise((resolve) => setTimeout(resolve, 310));
+        advancedPanel.querySelector('input[type="radio"][value="all"]').click();
+        if (document.querySelector('.search-input-row input').type !== 'text' || document.querySelectorAll('.clear-search-button').length !== 1) {
           throw new Error('search should expose exactly one custom clear control');
         }
 
@@ -530,25 +585,47 @@ app
         clickView('Tous les textes');
         await waitFor(() => document.querySelectorAll('.document-item').length >= 2, 'all documents restored after search');
 
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
-          .set.call(searchInput, 'deuxieme');
-        searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-        await waitFor(() => document.querySelectorAll('.document-item').length === 1, 'search filters by title');
-        if (!document.querySelector('.document-item')?.textContent.includes('Deuxieme document')) {
+        setSearch('deuxieme');
+        await waitFor(() => document.querySelectorAll('.catalog-row').length === 1, 'search filters by title');
+        if (!document.querySelector('.catalog-row')?.textContent.includes('Deuxieme document')) {
           throw new Error('title search result is incorrect');
         }
+        if (document.querySelector('.navigation-pane')?.textContent.includes('Résultats')) {
+          throw new Error('search results must not be duplicated in the navigation pane');
+        }
+        if (!document.querySelector('.catalog-snippet mark')) throw new Error('safe highlighted search snippet missing');
         await waitFor(() => document.querySelector('.status-bar')?.textContent.includes('1 affiches'), 'status filtered count');
+        const searchTitleSort = Array.from(document.querySelectorAll('.catalog-sort-button')).find((button) => button.textContent.includes('Titre'));
+        searchTitleSort.click();
+        await waitFor(() => searchTitleSort.textContent.includes('↑'), 'manual search result title sort');
+        await new Promise((resolve) => setTimeout(resolve, 310));
 
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
-          .set.call(searchInput, 'CONTENU INITIAL');
-        searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-        await waitFor(() => document.querySelectorAll('.document-item').length === 1, 'search filters by content case-insensitively');
-        if (!document.querySelector('.document-item')?.textContent.includes('Premier document')) {
-          throw new Error('content search result is incorrect');
+        setSearch('CONTENU INITIAL');
+        await waitFor(
+          () => document.querySelectorAll('.catalog-row').length === 1 && document.querySelector('.catalog-row')?.textContent.includes('Premier document'),
+          'search filters by content case-insensitively'
+        );
+
+        setSearch('premier lent');
+        await new Promise((resolve) => setTimeout(resolve, 310));
+        setSearch('deuxieme rapide');
+        await waitFor(() => document.querySelector('.catalog-row')?.textContent.includes('Deuxieme document'), 'newer fast search result');
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        if (!document.querySelector('.catalog-row')?.textContent.includes('Deuxieme document')) {
+          throw new Error('stale slow search replaced the latest results');
         }
 
         document.querySelector('.clear-search-button').click();
         await waitFor(() => document.querySelector('.folder-section'), 'clear search restores navigation');
+        document.querySelector('.advanced-search-button').click();
+        await waitFor(() => document.querySelector('.advanced-search-panel'), 'advanced search accessible with empty text');
+        const createdPeriodSelect = document.querySelector('.created-period-control select');
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(createdPeriodSelect, 'last7days');
+        createdPeriodSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        await new Promise((resolve) => setTimeout(resolve, 310));
+        await waitFor(() => document.querySelector('.document-catalog') && document.querySelector('.search-input-row input').value === '', 'date-only search');
+        dispatchShortcut('Escape');
+        await waitFor(() => !document.querySelector('.document-catalog'), 'Escape exits date-only results');
         clickView('Tous les textes');
         await waitFor(() => document.querySelectorAll('.document-item').length >= 2, 'all documents restored');
 
@@ -557,6 +634,7 @@ app
         document.querySelector('.toggle-metadata-button').click();
         await waitFor(() => !document.querySelector('.metadata-pane'), 'both panels hidden before Ctrl+F');
         const selectedTitleBeforeHiddenSearch = document.querySelector('.title-input')?.value;
+        const selectedIdBeforeHiddenSearch = document.querySelector('.status-bar')?.textContent.match(/Document (\d+)/)?.[1] ?? null;
         const ctrlFResult = dispatchShortcut('f', { ctrlKey: true });
         if (!ctrlFResult.defaultPrevented || ctrlFResult.dispatchResult !== false) {
           throw new Error('Ctrl+F did not prevent native search');
@@ -573,7 +651,9 @@ app
         dispatchShortcut('Escape');
         await waitFor(() => document.querySelector('.search-input-row input').value === '', 'Escape clears focused search');
         await waitFor(() => !document.querySelector('.navigation-pane'), 'Escape restores temporarily hidden navigation state');
-        if (document.querySelector('.title-input')?.value !== selectedTitleBeforeHiddenSearch) {
+        const selectedIdAfterHiddenSearch = document.querySelector('.status-bar')?.textContent.match(/Document (\d+)/)?.[1] ?? null;
+        if (selectedIdAfterHiddenSearch !== selectedIdBeforeHiddenSearch ||
+            (selectedTitleBeforeHiddenSearch !== undefined && document.querySelector('.title-input')?.value !== selectedTitleBeforeHiddenSearch)) {
           throw new Error('hidden navigation search changed the selected document');
         }
         document.querySelector('.toggle-navigation-button').click();
@@ -709,10 +789,8 @@ app
         await waitFor(() => !folderTreeText().includes('Doc bouton dossier'), 'collapse all hides folder documents');
         document.querySelector('.expand-all-folders').click();
         await waitFor(() => folderTreeText().includes('Doc sous dossier'), 'expand all shows descendants');
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
-          .set.call(document.querySelector('.search-input-row input'), 'Doc bouton');
-        document.querySelector('.search-input-row input').dispatchEvent(new Event('input', { bubbles: true }));
-        await waitFor(() => document.querySelectorAll('.document-item').length === 1, 'global search from folder view');
+        setSearch('Doc bouton');
+        await waitFor(() => document.querySelectorAll('.catalog-row').length === 1, 'global search from folder view');
         document.querySelector('.clear-search-button').click();
         await waitFor(() => document.querySelector('.unfiled-tree-section'), 'unfiled tree section visible after search');
         document.querySelector('.pseudo-folder-row .folder-button').click();
@@ -726,11 +804,9 @@ app
         if (unfiledTreeText().includes('Doc CtrlN dossier')) {
           throw new Error('folder-created document should not appear in unfiled tree');
         }
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
-          .set.call(document.querySelector('.search-input-row input'), 'Premier');
-        document.querySelector('.search-input-row input').dispatchEvent(new Event('input', { bubbles: true }));
-        await waitFor(() => document.querySelectorAll('.document-item').length === 1, 'search is global from unfiled view');
-        if (!document.querySelector('.document-item')?.textContent.includes('Premier document')) {
+        setSearch('Premier');
+        await waitFor(() => document.querySelectorAll('.catalog-row').length === 1, 'search is global from unfiled view');
+        if (!document.querySelector('.catalog-row')?.textContent.includes('Premier document')) {
           throw new Error('global search did not find foldered document from unfiled view');
         }
         document.querySelector('.clear-search-button').click();
@@ -921,11 +997,9 @@ app
           () => Array.from(document.querySelectorAll('.document-item')).some((item) => item.textContent.includes('Deuxieme document')),
           'trashed document appears in trash'
         );
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
-          .set.call(document.querySelector('.search-input-row input'), 'premier');
-        document.querySelector('.search-input-row input').dispatchEvent(new Event('input', { bubbles: true }));
-        await waitFor(() => document.querySelectorAll('.document-item').length === 1, 'search remains global from trash');
-        if (!document.querySelector('.document-item')?.textContent.includes('Premier document')) {
+        setSearch('premier');
+        await waitFor(() => document.querySelectorAll('.catalog-row').length === 1, 'search remains global from trash');
+        if (!document.querySelector('.catalog-row')?.textContent.includes('Premier document')) {
           throw new Error('global search from trash did not return active document');
         }
         document.querySelector('.clear-search-button').click();
@@ -1048,6 +1122,15 @@ app
         !catalogRequests.some((request) => request.sortBy === 'updated_at' && request.direction === 'asc') ||
         !catalogRequests.some((request) => request.sortBy === 'title' && request.direction === 'asc')) {
       throw new Error(`Catalog sort requests were not forwarded through IPC: ${JSON.stringify(catalogRequests)}`);
+    }
+    if (searchRequests.some((request) => request.fields.length === 0) ||
+        !searchRequests.some((request) => request.fields.join(',') === 'title,content,notes' && request.matchMode === 'all') ||
+        !searchRequests.some((request) => request.matchMode === 'any') ||
+        !searchRequests.some((request) => request.query === '' && request.createdPeriod === 'last7days' && request.sortBy === 'created_at' && request.direction === 'desc') ||
+        !searchRequests.some((request) => request.query === 'deuxieme' && request.sortBy === 'title' && request.direction === 'asc') ||
+        !searchRequests.some((request) => request.query === 'premier lent') ||
+        !searchRequests.some((request) => request.query === 'deuxieme rapide')) {
+      throw new Error(`Advanced search requests are incomplete or invalid: ${JSON.stringify(searchRequests)}`);
     }
     if (libraryBackupInvocations !== 1) {
       throw new Error(`Dirty backup should stop the menu workflow before a second IPC call, got ${libraryBackupInvocations}.`);
@@ -1291,6 +1374,7 @@ app
         input.dispatchEvent(new Event('input', { bubbles: true }));
       })()
     `);
+    await new Promise((resolve) => setTimeout(resolve, 310));
     window.webContents.send('library:menu-action', { action: 'known', path: 'C:\\temporary\\library-b.sqlite' });
     const switchResult = await window.webContents.executeJavaScript(`
       (async () => {
@@ -1443,7 +1527,7 @@ app
 
         const search = document.querySelector('.search-input-row input');
         setNativeValue(search, 'hippocampe');
-        await waitFor(() => document.querySelector('.document-item')?.textContent.includes('TODO'), 'TODO search result');
+        await waitFor(() => document.querySelector('.catalog-row')?.textContent.includes('TODO'), 'TODO search result');
         document.querySelector('.clear-search-button').click();
         await waitFor(() => document.querySelector('.search-input-row input')?.value === '', 'clear TODO search');
 
