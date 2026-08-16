@@ -31,8 +31,8 @@ app
       db = createTextothequeDatabase(dbPath);
 
     const created = db.createDocument();
-    if (created.title !== '') {
-      throw new Error('Un nouveau document doit stocker un titre vide en base.');
+    if (!/^tot_\d{8}_\d{2,}$/.test(created.title)) {
+      throw new Error(`Un nouveau document doit stocker un titre automatique en base: ${created.title}`);
     }
     assertCanonicalIsoUtc(created.created_at, 'documents.created_at apres creation');
     assertCanonicalIsoUtc(created.updated_at, 'documents.updated_at apres creation');

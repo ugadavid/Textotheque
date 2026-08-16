@@ -158,10 +158,17 @@ app
     });
     ipcMain.handle('documents:create', (_event, folderId = null) => {
       rejectIfForced('documents:create');
+      const automaticTitleDate = '20260816';
+      const automaticTitlePattern = new RegExp(`^tot_${automaticTitleDate}_(\\d{2})$`);
+      const maximumSuffix = documents.reduce((maximum, document) => {
+        const match = document.title.match(automaticTitlePattern);
+        return match ? Math.max(maximum, Number(match[1])) : maximum;
+      }, 0);
+      if (maximumSuffix >= 99) throw new Error('automatic document title limit reached');
       const created = {
         ...documents[0],
         id: Math.max(...documents.map((document) => document.id)) + 1,
-        title: '',
+        title: `tot_${automaticTitleDate}_${String(maximumSuffix + 1).padStart(2, '0')}`,
         content: '',
         status: 'draft',
         favorite: 0,
@@ -384,7 +391,7 @@ app
         }
         const viewButtons = document.querySelectorAll('.nav-view-button');
         if (viewButtons.length !== 2) throw new Error('document view buttons missing');
-        if (expectedAppVersion !== '0.1.21') throw new Error('unexpected application version');
+        if (expectedAppVersion !== '0.1.22') throw new Error('unexpected application version');
         const initialExpandedState = JSON.parse(window.localStorage.getItem('textotheque:expanded-folders:v2') ?? '[]');
         if (initialExpandedState.length !== 0) throw new Error('folders should be closed by default');
         await waitFor(() => window.localStorage.getItem('textotheque:pane-layout:v2'), 'pane layout stored');
@@ -558,8 +565,11 @@ app
           throw new Error('folder tree should not include unfiled document');
         }
         dispatchShortcut('n', { ctrlKey: true });
-        await waitFor(() => document.querySelector('.title-input')?.value === '', 'Ctrl+N creates empty document in folder');
-        if ((await window.textotheque.listDocuments()).find((item) => item.title === '')?.folder_id !== 1) {
+        const ctrlNFolderTitle = await waitFor(
+          () => /^tot_20260816_\\d{2,}$/.test(document.querySelector('.title-input')?.value ?? '') && document.querySelector('.title-input').value,
+          'Ctrl+N creates automatically titled document in folder'
+        );
+        if ((await window.textotheque.listDocuments()).find((item) => item.title === ctrlNFolderTitle)?.folder_id !== 1) {
           throw new Error('Ctrl+N in folder did not assign folder_id');
         }
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
@@ -571,8 +581,11 @@ app
           'Ctrl+N folder document visible immediately in tree'
         );
         document.querySelector('.icon-button').click();
-        await waitFor(() => document.querySelector('.title-input')?.value === '', 'button plus creates empty document in folder');
-        if ((await window.textotheque.listDocuments()).find((item) => item.title === '')?.folder_id !== 1) {
+        const buttonFolderTitle = await waitFor(
+          () => /^tot_20260816_\\d{2,}$/.test(document.querySelector('.title-input')?.value ?? '') && document.querySelector('.title-input').value,
+          'button plus creates automatically titled document in folder'
+        );
+        if ((await window.textotheque.listDocuments()).find((item) => item.title === buttonFolderTitle)?.folder_id !== 1) {
           throw new Error('button plus in folder did not assign folder_id');
         }
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
@@ -589,7 +602,10 @@ app
         document.querySelector('.folder-actions button[title="Nouveau sous-dossier"]').click();
         await waitFor(() => Array.from(document.querySelectorAll('.folder-button')).some((item) => item.textContent.includes('Nouveau dossier')), 'subfolder created');
         dispatchShortcut('n', { ctrlKey: true });
-        await waitFor(() => document.querySelector('.title-input')?.value === '', 'Ctrl+N creates empty document in subfolder');
+        await waitFor(
+          () => /^tot_20260816_\\d{2,}$/.test(document.querySelector('.title-input')?.value ?? ''),
+          'Ctrl+N creates automatically titled document in subfolder'
+        );
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
           .set.call(document.querySelector('.title-input'), 'Doc sous dossier');
         document.querySelector('.title-input').dispatchEvent(new Event('input', { bubbles: true }));
@@ -892,11 +908,17 @@ app
         }
 
         dispatchShortcut('n', { ctrlKey: true });
-        await waitFor(() => document.querySelector('.title-input')?.value === '', 'new document title is empty');
+        const automaticTitle = await waitFor(
+          () => /^tot_20260816_\\d{2,}$/.test(document.querySelector('.title-input')?.value ?? '') && document.querySelector('.title-input').value,
+          'new document receives automatic title'
+        );
         if (document.querySelector('.title-input').placeholder !== 'Sans titre') {
           throw new Error('Untitled fallback is not used as title placeholder');
         }
-        await waitFor(() => document.querySelector('.unfiled-tree-section')?.textContent.includes('Sans titre'), 'untitled fallback visible in navigation');
+        await waitFor(
+          () => document.querySelector('.unfiled-tree-section')?.textContent.includes(automaticTitle),
+          'automatic title visible in navigation'
+        );
         const newTitleInput = document.querySelector('.title-input');
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
           .set.call(newTitleInput, 'Titre saisi directement');

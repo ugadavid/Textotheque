@@ -40,6 +40,7 @@ export interface DocumentInput {
 
 export const CURRENT_SCHEMA_VERSION = 2;
 export const TEXTOTHEQUE_APPLICATION_ID = 0x5445584f;
+export const MAX_AUTOMATIC_DOCUMENTS_PER_DAY = 99;
 
 export type LibraryCompatibility = 'compatible' | 'legacy-textotheque' | 'too-new' | 'foreign' | 'invalid';
 
@@ -73,8 +74,16 @@ export interface PreMigrationBackupResult {
   inspection: LibraryInspection;
 }
 
-function nowIso(): string {
-  return new Date().toISOString();
+function nowIso(date = new Date()): string {
+  return date.toISOString();
+}
+
+export function localDocumentTitleDate(date: Date): string {
+  return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
+}
+
+export function isAutomaticDocumentTitle(title: string): boolean {
+  return /^tot_\d{8}_(?:0[1-9]|[1-9]\d)$/.test(title);
 }
 
 // Application writes timestamps explicitly through nowIso(); SQL defaults are fallback only.
@@ -574,22 +583,35 @@ export class TextothequeDatabase {
 
   cleanupEmptyDraftDocuments(): number {
     const now = nowIso();
-    const result = this.db
+    const candidates = this.db
       .prepare(
-        `UPDATE documents
-         SET deleted_at = @now,
-             updated_at = @now
+        `SELECT id, title
+         FROM documents
          WHERE content_format = 'plain'
            AND status = 'draft'
            AND favorite = 0
            AND deleted_at IS NULL
-           AND (trim(title) = '' OR title = 'Sans titre')
            AND trim(content) = ''
            AND trim(notes) = ''`
       )
-      .run({ now });
+      .all() as Array<{ id: number; title: string }>;
+    const idsToCleanup = candidates
+      .filter(({ title }) => title.trim() === '' || title === 'Sans titre' || isAutomaticDocumentTitle(title))
+      .map(({ id }) => id);
 
-    return result.changes;
+    if (idsToCleanup.length === 0) return 0;
+
+    const trashDraft = this.db.prepare(
+      `UPDATE documents
+       SET deleted_at = @now,
+           updated_at = @now
+       WHERE id = @id AND deleted_at IS NULL`
+    );
+    const cleanupDrafts = this.db.transaction((documentIds: number[]) =>
+      documentIds.reduce((changes, id) => changes + trashDraft.run({ id, now }).changes, 0)
+    );
+
+    return cleanupDrafts(idsToCleanup);
   }
 
   listDocuments(): TextDocument[] {
@@ -626,21 +648,48 @@ export class TextothequeDatabase {
     return document ?? null;
   }
 
-  createDocument(folderId: number | null = null): TextDocument {
-    this.assertFolderExists(folderId, 'Impossible de creer le document');
-    const now = nowIso();
-    const result = this.db
-      .prepare(
-        `INSERT INTO documents (title, content, content_format, status, favorite, folder_id, created_at, updated_at, last_opened_at, notes)
-         VALUES (@title, @content, 'plain', 'draft', 0, @folder_id, @now, @now, @now, '')`
-      )
-      .run({ title: '', content: '', folder_id: folderId, now });
+  createDocument(folderId: number | null = null, creationDate = new Date()): TextDocument {
+    const create = this.db.transaction(() => {
+      this.assertFolderExists(folderId, 'Impossible de creer le document');
+      const localDate = localDocumentTitleDate(creationDate);
+      const prefix = `tot_${localDate}_`;
+      const suffixStart = prefix.length + 1;
+      const maximum = this.db
+        .prepare(
+          `SELECT COALESCE(MAX(CAST(substr(title, @suffix_start, 2) AS INTEGER)), 0) AS maximum_suffix
+           FROM documents
+           WHERE length(title) = @title_length
+             AND substr(title, 1, @prefix_length) = @prefix
+             AND substr(title, @suffix_start, 2) GLOB '[0-9][0-9]'
+             AND CAST(substr(title, @suffix_start, 2) AS INTEGER) BETWEEN 1 AND @maximum_allowed`
+        )
+        .get({
+          prefix,
+          prefix_length: prefix.length,
+          suffix_start: suffixStart,
+          title_length: prefix.length + 2,
+          maximum_allowed: MAX_AUTOMATIC_DOCUMENTS_PER_DAY,
+        }) as { maximum_suffix: number };
+      if (maximum.maximum_suffix >= MAX_AUTOMATIC_DOCUMENTS_PER_DAY) {
+        throw new Error(
+          `Impossible de créer un nouveau document : la limite de ${MAX_AUTOMATIC_DOCUMENTS_PER_DAY} documents automatiques pour aujourd'hui est atteinte.`
+        );
+      }
+      const title = `${prefix}${String(maximum.maximum_suffix + 1).padStart(2, '0')}`;
+      const now = nowIso(creationDate);
+      const result = this.db
+        .prepare(
+          `INSERT INTO documents (title, content, content_format, status, favorite, folder_id, created_at, updated_at, last_opened_at, notes)
+           VALUES (@title, @content, 'plain', 'draft', 0, @folder_id, @now, @now, @now, '')`
+        )
+        .run({ title, content: '', folder_id: folderId, now });
 
-    const document = this.getDocument(Number(result.lastInsertRowid));
-    if (!document) {
-      throw new Error('Le document cree est introuvable.');
-    }
-    return document;
+      const document = this.getDocument(Number(result.lastInsertRowid));
+      if (!document) throw new Error('Le document cree est introuvable.');
+      return document;
+    });
+
+    return create();
   }
 
   updateDocument(id: number, input: DocumentInput): TextDocument {

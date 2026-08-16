@@ -254,6 +254,118 @@ Ne jamais créer un index dépendant d’une colonne avant d’avoir garanti l�
 
 Ce problème a déjà provoqué un bug réel avec `deleted_at`.
 
+### La base n’est pas un dépotoir
+
+SQLite n’est pas un simple conteneur de valeurs brutes que l’application doit aspirer pour tout retraiter en mémoire.
+
+Lorsqu’une opération est naturellement **ensembliste** et s’exprime clairement dans la base, préférer la laisser à la base, notamment pour :
+
+- filtrer ;
+- trier ;
+- agréger (`COUNT`, `MIN`, `MAX`, etc.) ;
+- rechercher ;
+- dédupliquer ;
+- appliquer des contraintes simples ;
+- vérifier une existence ;
+- calculer une valeur dérivée simple sur un ensemble.
+
+Éviter sans raison des flux du type :
+
+```text
+SELECT beaucoup de lignes
+→ tableau JavaScript
+→ filtrage / tri / MAX / déduplication en mémoire
+```
+
+si SQLite peut produire directement le résultat utile avec une requête claire et bornée.
+
+La règle inverse est tout aussi importante :
+
+> ne pas forcer toute logique métier dans SQL uniquement parce que SQL peut l’exprimer.
+
+Placer chaque responsabilité là où elle reste la plus :
+
+- claire ;
+- bornée ;
+- vérifiable ;
+- efficace ;
+- maintenable.
+
+La base doit être utilisée comme un moteur de données, pas comme un dépotoir ; l’application doit rester l’endroit naturel des comportements applicatifs.
+
+### Types et domaines : partir du métier, pas de la capacité maximale
+
+Avant de choisir une représentation technique, définir le **domaine réel** de la donnée :
+
+```text
+quelles valeurs sont valides ?
+quelle borne est raisonnable ?
+NULL a-t-il un sens ?
+quelle unité ?
+quelle précision ?
+quelle cardinalité ?
+quelle durée de vie ?
+```
+
+Puis choisir la représentation la plus simple et la plus appropriée.
+
+Ne pas surdimensionner « au cas où ».
+
+Exemples de mauvaises habitudes à éviter :
+
+```text
+entier arbitrairement énorme
+alors que le domaine métier vaut 1..99
+
+texte
+pour une donnée naturellement numérique ou booléenne
+
+chaîne libre
+pour un petit ensemble fermé de valeurs
+
+conversion répétée à chaque requête
+parce que la représentation persistée ne correspond pas au domaine
+```
+
+Principe :
+
+> choisir les types à partir du domaine métier, pas à partir de la capacité maximale du langage ou du moteur.
+
+Dans SQLite, tenir compte de son typage dynamique : raisonner en termes de **type affinity, représentation, nullabilité et contraintes explicites**, et ajouter un `CHECK` ou une autre contrainte lorsque cela protège réellement un invariant métier sans alourdir inutilement le modèle.
+
+Ne pas utiliser `BigInt`, un domaine numérique arbitrairement large ou une représentation textuelle simplement parce qu’ils sont techniquement disponibles.
+
+Une borne métier raisonnable vaut mieux qu’une « infinité technique » sans besoin réel.
+
+### Conversions et index
+
+Éviter les conversions implicites ou répétées qui rendent les requêtes ambiguës ou empêchent l’usage naturel d’un index.
+
+Lorsqu’une donnée sert régulièrement à :
+
+- filtrer ;
+- joindre ;
+- trier ;
+- agréger ;
+
+sa représentation persistée doit être cohérente avec cet usage.
+
+Ne pas ajouter un index « au cas où ». Un index doit répondre à un accès réel ou à une contrainte réelle, et son coût d’écriture et de stockage fait partie du choix.
+
+### Le schéma est un contrat
+
+Le schéma doit exprimer autant que raisonnablement possible :
+
+- la forme des données ;
+- leur nullabilité ;
+- leurs relations ;
+- leurs domaines fermés ou bornés lorsque cela a du sens ;
+- les invariants que la base peut garantir simplement.
+
+Ne pas laisser volontairement entrer n’importe quelle valeur sous prétexte que « le code vérifiera plus tard ».
+
+Inversement, ne pas transformer SQLite en forteresse disproportionnée : Textothèque reste une application personnelle locale et les contraintes doivent rester proportionnées au risque réel.
+
 ---
 
 ## 8. Compatibilité legacy
