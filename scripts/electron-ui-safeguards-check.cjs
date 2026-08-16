@@ -70,6 +70,7 @@ let libraryChooseCreateInvocations = 0;
 let libraryInspectInvocations = 0;
 let libraryOpenInvocations = 0;
 let specialDocumentInvocations = 0;
+const catalogRequests = [];
 let libraryInfo = {
   path: 'C:\\temporary\\test-ui.sqlite',
   fileName: 'test-ui.sqlite',
@@ -153,6 +154,38 @@ app
     ipcMain.handle('documents:list', () => {
       rejectIfForced('documents:list');
       return documents.filter((document) => !document.deleted_at).map(cloneDocument);
+    });
+    ipcMain.handle('documents:list-catalog', (_event, options) => {
+      rejectIfForced('documents:list-catalog');
+      catalogRequests.push({ ...options });
+      const direction = options.direction === 'asc' ? 1 : -1;
+      const folderName = (document) => folders.find((folder) => folder.id === document.folder_id)?.name ?? null;
+      const valueFor = (row) => {
+        if (options.sortBy === 'folder') return row.folderName ?? '';
+        if (options.sortBy === 'favorite') return Number(row.favorite);
+        if (options.sortBy === 'created_at') return row.createdAt;
+        if (options.sortBy === 'updated_at') return row.updatedAt;
+        return row[options.sortBy];
+      };
+      return documents
+        .filter((document) => !document.deleted_at)
+        .map((document) => ({
+          id: document.id,
+          title: document.title,
+          folderId: document.folder_id,
+          folderName: folderName(document),
+          status: document.status,
+          favorite: Boolean(document.favorite),
+          createdAt: document.created_at,
+          updatedAt: document.updated_at,
+          specialRole: document.special_role ?? null,
+        }))
+        .sort((left, right) => {
+          const leftValue = valueFor(left);
+          const rightValue = valueFor(right);
+          const comparison = String(leftValue ?? '').localeCompare(String(rightValue ?? ''), 'fr', { sensitivity: 'base' });
+          return comparison === 0 ? (left.id - right.id) * direction : comparison * direction;
+        });
     });
     ipcMain.handle('documents:list-deleted', () => {
       rejectIfForced('documents:list-deleted');
@@ -417,7 +450,7 @@ app
         }
         const viewButtons = document.querySelectorAll('.nav-view-button');
         if (viewButtons.length !== 2) throw new Error('document view buttons missing');
-        if (expectedAppVersion !== '0.1.23') throw new Error('unexpected application version');
+        if (expectedAppVersion !== '0.1.24') throw new Error('unexpected application version');
         const initialExpandedState = JSON.parse(window.localStorage.getItem('textotheque:expanded-folders:v2') ?? '[]');
         if (initialExpandedState.length !== 0) throw new Error('folders should be closed by default');
         await waitFor(() => window.localStorage.getItem('textotheque:pane-layout:v2'), 'pane layout stored');
@@ -711,10 +744,31 @@ app
         document.querySelector('.navigation-home').click();
         await waitFor(() => folderTreeText().includes('Premier document'), 'selected document path reopened in navigation');
         clickView('Tous les textes');
-        await waitFor(() => document.querySelectorAll('.document-item').length >= 2, 'all view reopened after reveal check');
+        await waitFor(() => document.querySelector('.document-catalog'), 'catalog reopened after reveal check');
+        const catalogLabels = Array.from(document.querySelectorAll('.catalog-sort-button')).map((button) => button.textContent.trim().replace(/[↑↓]/g, '').trim());
+        if (catalogLabels.join('|') !== 'Titre|Dossier|Statut|Favori|Créé|Modifié') {
+          throw new Error('catalog columns are incomplete: ' + catalogLabels.join('|'));
+        }
+        if (document.querySelectorAll('.catalog-row').length < 2) throw new Error('active catalog rows missing');
+        if (document.querySelector('.catalog-table').textContent.includes('Ancien document')) {
+          throw new Error('trashed document leaked into catalog');
+        }
+        const modifiedSortButton = Array.from(document.querySelectorAll('.catalog-sort-button'))
+          .find((button) => button.textContent.includes('Modifié'));
+        if (!modifiedSortButton.textContent.includes('↓')) throw new Error('default catalog sort is not updated_at descending');
+        modifiedSortButton.click();
+        await waitFor(() => modifiedSortButton.textContent.includes('↑'), 'catalog modified ascending sort');
+        const titleSortButton = Array.from(document.querySelectorAll('.catalog-sort-button'))
+          .find((button) => button.textContent.includes('Titre'));
+        titleSortButton.click();
+        await waitFor(() => titleSortButton.textContent.includes('↑'), 'catalog title ascending sort');
+        const firstCatalogRow = Array.from(document.querySelectorAll('.catalog-row'))
+          .find((row) => row.textContent.includes('Premier document'));
+        firstCatalogRow.click();
+        await waitFor(() => document.querySelector('.title-input')?.value === 'Premier document', 'catalog row opens document');
 
         const firstTitle = document.querySelector('.title-input');
-        const editor = document.querySelector('.content-editor');
+        let editor = document.querySelector('.content-editor');
         if (!firstTitle || !editor) throw new Error('editor missing');
 
         dispatchShortcut('F2');
@@ -725,6 +779,26 @@ app
         editor.dispatchEvent(new Event('input', { bubbles: true }));
         await waitFor(() => document.querySelector('.title-dirty-marker'), 'dirty marker visible');
         await waitFor(() => document.querySelector('.status-bar')?.textContent.includes('Modifie'), 'status dirty state');
+        clickView('Tous les textes');
+        await waitFor(() => document.querySelector('.document-catalog'), 'catalog opens over dirty document');
+        if (document.querySelector('.confirm-dialog')) throw new Error('opening catalog must not trigger dirty confirmation');
+        const selectedCatalogRow = document.querySelector('.catalog-row.selected');
+        if (!selectedCatalogRow?.textContent.includes('Premier document')) {
+          throw new Error('selected document is not visible in catalog');
+        }
+        const otherCatalogRow = Array.from(document.querySelectorAll('.catalog-row'))
+          .find((row) => row.textContent.includes('Deuxieme document'));
+        otherCatalogRow.click();
+        await waitFor(() => document.querySelector('.confirm-dialog'), 'catalog row uses dirty guard');
+        document.querySelector('.confirm-dialog .secondary-button').click();
+        await waitFor(() => !document.querySelector('.confirm-dialog'), 'catalog row dirty guard canceled');
+        if (!document.querySelector('.document-catalog')) throw new Error('dirty cancellation left catalog');
+        document.querySelector('.catalog-row.selected').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        await waitFor(() => document.querySelector('.content-editor'), 'selected catalog row opens with Enter');
+        if (document.querySelector('.content-editor').value !== 'Contenu initial modifie par raccourci' || !document.querySelector('.title-dirty-marker')) {
+          throw new Error('catalog navigation lost the in-memory draft');
+        }
+        editor = document.querySelector('.content-editor');
         await window.textotheque.chooseOpenLibrary();
         await waitFor(() => document.querySelector('.confirm-dialog'), 'library switch respects dirty confirmation');
         document.querySelector('.confirm-dialog .secondary-button').click();
@@ -969,6 +1043,11 @@ app
 
     if (!result.ok) {
       throw new Error(`UI safeguards check failed: ${result.errorStack ?? 'unknown error'}`);
+    }
+    if (!catalogRequests.some((request) => request.sortBy === 'updated_at' && request.direction === 'desc') ||
+        !catalogRequests.some((request) => request.sortBy === 'updated_at' && request.direction === 'asc') ||
+        !catalogRequests.some((request) => request.sortBy === 'title' && request.direction === 'asc')) {
+      throw new Error(`Catalog sort requests were not forwarded through IPC: ${JSON.stringify(catalogRequests)}`);
     }
     if (libraryBackupInvocations !== 1) {
       throw new Error(`Dirty backup should stop the menu workflow before a second IPC call, got ${libraryBackupInvocations}.`);
@@ -1325,7 +1404,7 @@ app
           element.dispatchEvent(new Event('input', { bubbles: true }));
         };
 
-        const todoButton = document.querySelector('.todo-toolbar-button');
+        let todoButton = document.querySelector('.todo-toolbar-button');
         if (!todoButton || todoButton.title !== 'Ouvrir le TODO — Ctrl+Shift+T') {
           throw new Error('TODO toolbar button or tooltip missing');
         }
@@ -1333,6 +1412,7 @@ app
         await waitFor(() => document.querySelector('.document-item'), 'library B document');
         document.querySelector('.document-item').click();
         const editor = await waitFor(() => document.querySelector('.content-editor'), 'selected document editor');
+        todoButton = document.querySelector('.todo-toolbar-button');
         setNativeValue(editor, 'Modification qui doit rester protegee');
         await waitFor(() => document.querySelector('.title-dirty-marker'), 'dirty state before TODO');
 
@@ -1375,12 +1455,16 @@ app
         ].join(' ');
         if (normalTreeText.includes('TODO')) throw new Error('TODO leaked into normal navigation tree');
 
+        const directCatalog = await window.textotheque.listDocumentCatalog({ sortBy: 'updated_at', direction: 'desc' });
+        if (!directCatalog.some((item) => item.specialRole === 'todo')) {
+          throw new Error('TODO missing from direct catalog API: ' + JSON.stringify(directCatalog));
+        }
         findButton('.nav-view-button', 'Tous les textes').click();
-        await waitFor(
-          () => Array.from(document.querySelectorAll('.document-item')).some((item) => item.textContent.includes('TODO')),
-          'TODO in all documents'
-        );
-        const normalDocument = Array.from(document.querySelectorAll('.document-item')).find((item) => !item.textContent.includes('TODO'));
+        await waitFor(() => document.querySelector('.document-catalog'), 'document catalog after TODO');
+        if (!Array.from(document.querySelectorAll('.catalog-row')).some((row) => row.textContent.includes('TODO'))) {
+          throw new Error('TODO missing from rendered catalog: ' + document.querySelector('.document-catalog')?.textContent);
+        }
+        const normalDocument = Array.from(document.querySelectorAll('.catalog-row')).find((row) => !row.textContent.includes('TODO'));
         normalDocument.click();
         await waitFor(() => document.querySelector('.title-input')?.value !== 'TODO', 'normal document before shortcut');
         return {

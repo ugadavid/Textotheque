@@ -1,4 +1,13 @@
-import type { DocumentInput, Folder, LibraryBackupResult, LibraryInfo, SpecialDocumentRole, TextDocument } from './database.js';
+import type {
+  CatalogDocument,
+  DocumentCatalogOptions,
+  DocumentInput,
+  Folder,
+  LibraryBackupResult,
+  LibraryInfo,
+  SpecialDocumentRole,
+  TextDocument,
+} from './database.js';
 import type { LibraryCreateResult, LibraryCreateSelection, LibraryMenuAction, LibraryOpenResult } from './library-manager.js';
 import type { FileMenuAction, TextExportDraft, TextExportResult } from './text-export.js';
 
@@ -28,6 +37,8 @@ const api = {
     return () => ipcRenderer.removeListener('file:menu-action', listener);
   },
   listDocuments: (): Promise<TextDocument[]> => ipcRenderer.invoke('documents:list'),
+  listDocumentCatalog: (options: DocumentCatalogOptions): Promise<CatalogDocument[]> =>
+    ipcRenderer.invoke('documents:list-catalog', options),
   listDeletedDocuments: (): Promise<TextDocument[]> => ipcRenderer.invoke('documents:list-deleted'),
   listFolders: (): Promise<Folder[]> => ipcRenderer.invoke('folders:list'),
   createFolder: (parentId: number | null): Promise<Folder> => ipcRenderer.invoke('folders:create', parentId),

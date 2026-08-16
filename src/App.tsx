@@ -8,6 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import EditorPane from './components/EditorPane';
+import DocumentCatalog from './components/DocumentCatalog';
 import MetadataPane from './components/MetadataPane';
 import NavigationPane from './components/NavigationPane';
 import StatusBar from './components/StatusBar';
@@ -37,6 +38,8 @@ import {
   openLibrary,
 } from './services/library';
 import { exportTextDocument, setDocumentExportAvailable } from './services/text-export';
+import { listDocumentCatalog } from './services/catalog';
+import type { CatalogDocument, CatalogSortField, DocumentCatalogOptions } from './types/catalog';
 import type { DocumentInput, DocumentStatus, Folder, TextDocument } from './types/document';
 import type { LibraryInfo, LibraryInspection, LibraryMenuAction, LibraryOpenResult } from './types/library';
 import type { TextExportDraft } from './types/text-export';
@@ -138,6 +141,13 @@ function sameDocumentInput(first: DocumentInput, second: DocumentInput): boolean
 
 export default function App() {
   const [documents, setDocuments] = useState<TextDocument[]>([]);
+  const [catalogDocuments, setCatalogDocuments] = useState<CatalogDocument[]>([]);
+  const [catalogOptions, setCatalogOptions] = useState<DocumentCatalogOptions>({
+    sortBy: 'updated_at',
+    direction: 'desc',
+  });
+  const [catalogVisible, setCatalogVisible] = useState(false);
+  const [catalogLoading, setCatalogLoading] = useState(false);
   const [deletedDocuments, setDeletedDocuments] = useState<TextDocument[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [documentView, setDocumentView] = useState<DocumentView>('navigation');
@@ -168,6 +178,7 @@ export default function App() {
   const latestDraftRef = useRef<DocumentSaveSnapshot | null>(null);
   const latestTextExportRef = useRef<TextExportDraft | null>(null);
   const restoreHiddenNavigationAfterSearchRef = useRef(false);
+  const catalogRequestRef = useRef(0);
 
   useEffect(() => {
     void refreshDocuments().catch((loadError: unknown) => {
@@ -500,8 +511,43 @@ export default function App() {
     }
   }
 
+  async function refreshCatalog(options: DocumentCatalogOptions = catalogOptions): Promise<void> {
+    const requestId = ++catalogRequestRef.current;
+    setCatalogLoading(true);
+    try {
+      const rows = await listDocumentCatalog(options);
+      if (requestId !== catalogRequestRef.current) return;
+      setCatalogDocuments(rows);
+      setError(null);
+    } catch (catalogError: unknown) {
+      if (requestId !== catalogRequestRef.current) return;
+      showOperationError('load-document-catalog', catalogError, 'Impossible de charger le catalogue.');
+    } finally {
+      if (requestId === catalogRequestRef.current) setCatalogLoading(false);
+    }
+  }
+
+  function handleCatalogSort(sortBy: CatalogSortField): void {
+    const nextOptions: DocumentCatalogOptions = {
+      sortBy,
+      direction: catalogOptions.sortBy === sortBy && catalogOptions.direction === 'asc' ? 'desc' : 'asc',
+    };
+    setCatalogOptions(nextOptions);
+    void refreshCatalog(nextOptions);
+  }
+
   async function handleChangeDocumentView(nextView: DocumentView, nextFolderId: number | null = null) {
-    if (nextView === documentView && nextFolderId === selectedFolderId) {
+    if (nextView === 'all') {
+      if (catalogVisible && documentView === 'all') return;
+      setDocumentView('all');
+      setSelectedFolderId(null);
+      setCatalogVisible(true);
+      setError(null);
+      void refreshCatalog(catalogOptions);
+      return;
+    }
+
+    if (nextView === documentView && nextFolderId === selectedFolderId && !catalogVisible) {
       return;
     }
 
@@ -514,6 +560,7 @@ export default function App() {
       await refreshDocuments(undefined, nextView, nextFolderId);
       setDocumentView(nextView);
       setSelectedFolderId(nextFolderId);
+      setCatalogVisible(false);
     } catch (loadError: unknown) {
       showOperationError('change-view', loadError, 'Impossible de charger cette vue.');
     }
@@ -545,6 +592,7 @@ export default function App() {
       await refreshDocuments(document.id, targetView, targetFolderId);
       setDocumentView(targetView);
       setSelectedFolderId(targetFolderId);
+      setCatalogVisible(false);
     } catch (loadError: unknown) {
       showOperationError('refresh-after-create-document', loadError, 'Document cree, mais actualisation impossible.');
       return;
@@ -554,6 +602,7 @@ export default function App() {
 
   async function handleOpenTodo() {
     if (selectedDocumentIsTodo) {
+      setCatalogVisible(false);
       return;
     }
     if (!(await confirmDiscardUnsavedChanges())) {
@@ -581,6 +630,7 @@ export default function App() {
       applyDocument(nextDocuments.find((document) => document.id === todo.id) ?? todo);
       setDocumentView('all');
       setSelectedFolderId(null);
+      setCatalogVisible(false);
       focusEditor();
     } catch (loadError: unknown) {
       showOperationError('refresh-after-open-special-todo', loadError, 'TODO ouvert, mais actualisation impossible.');
@@ -609,6 +659,7 @@ export default function App() {
       await refreshDocuments(undefined, 'folder', folder.id);
       setDocumentView('folder');
       setSelectedFolderId(folder.id);
+      setCatalogVisible(false);
     } catch (loadError: unknown) {
       showOperationError('refresh-after-create-folder', loadError, 'Dossier cree, mais actualisation impossible.');
     }
@@ -630,17 +681,22 @@ export default function App() {
     }
   }
 
-  async function handleSelectDocument(id: number, nextView?: DocumentView, nextFolderId?: number | null) {
+  async function handleSelectDocument(
+    id: number,
+    nextView?: DocumentView,
+    nextFolderId?: number | null
+  ): Promise<boolean> {
     if (id === selectedDocument?.id) {
       if (nextView) {
         setDocumentView(nextView);
         setSelectedFolderId(nextFolderId ?? null);
       }
-      return;
+      setCatalogVisible(false);
+      return true;
     }
 
     if (!(await confirmDiscardUnsavedChanges())) {
-      return;
+      return false;
     }
 
     setError(null);
@@ -649,13 +705,14 @@ export default function App() {
       document = await selectDocument(id);
     } catch (loadError: unknown) {
       showOperationError('select-document', loadError, 'Impossible de charger le document.');
-      return;
+      return false;
     }
     if (document) {
       if (nextView) {
         setDocumentView(nextView);
         setSelectedFolderId(nextFolderId ?? null);
       }
+      setCatalogVisible(false);
       applyDocument(document);
       try {
         await refreshDocuments(document.id, nextView ?? documentView, nextFolderId ?? selectedFolderId);
@@ -663,7 +720,9 @@ export default function App() {
         showOperationError('refresh-after-select-document', loadError, 'Document ouvert, mais actualisation impossible.');
       }
       focusEditor();
+      return true;
     }
+    return false;
   }
 
   function captureCurrentSaveSnapshot(): DocumentSaveSnapshot | null {
@@ -817,6 +876,8 @@ export default function App() {
   function clearWorkspaceForLibrarySwitch(nextLibrary: LibraryInfo): void {
     invalidateEditorContext();
     setDocuments([]);
+    setCatalogDocuments([]);
+    setCatalogVisible(false);
     setDeletedDocuments([]);
     setFolders([]);
     setDocumentView('navigation');
@@ -1030,6 +1091,7 @@ export default function App() {
       await refreshDocuments(restored.id, 'all', null);
       setDocumentView('all');
       setSelectedFolderId(null);
+      setCatalogVisible(false);
     } catch (loadError: unknown) {
       showOperationError('refresh-after-restore-document', loadError, 'Document restaure, mais actualisation impossible.');
       return;
@@ -1241,7 +1303,25 @@ export default function App() {
           aria-label="Redimensionner le volet gauche"
           onPointerDown={(event) => startPaneResize('left', event)}
         /> : null}
-        <EditorPane
+        {catalogVisible ? <DocumentCatalog
+          documents={catalogDocuments}
+          sortBy={catalogOptions.sortBy}
+          direction={catalogOptions.direction}
+          selectedDocumentId={selectedDocument?.id ?? null}
+          loading={catalogLoading}
+          error={error}
+          searchQuery={searchQuery}
+          navigationVisible={paneLayout.leftVisible}
+          metadataVisible={paneLayout.rightVisible}
+          isTodo={selectedDocumentIsTodo}
+          onSort={handleCatalogSort}
+          onOpenDocument={(id) => { void handleSelectDocument(id, 'all', null); }}
+          onSearchChange={handleSearchChange}
+          onClearSearch={clearSearchAndReturnToNavigation}
+          onToggleNavigation={toggleNavigationPane}
+          onToggleMetadata={toggleMetadataPane}
+          onOpenTodo={handleOpenTodo}
+        /> : <EditorPane
           document={selectedDocument}
           title={title}
           content={content}
@@ -1270,7 +1350,7 @@ export default function App() {
           onSave={handleSave}
           onTrash={handleTrashCurrentDocument}
           onRestore={handleRestoreCurrentDocument}
-        />
+        />}
         {paneLayout.rightVisible ? <button
           className="resize-handle right-resize-handle"
           type="button"

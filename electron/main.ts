@@ -13,7 +13,12 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { type DocumentInput, type SpecialDocumentRole, type TextothequeDatabase } from './database.js';
+import {
+  type DocumentCatalogOptions,
+  type DocumentInput,
+  type SpecialDocumentRole,
+  type TextothequeDatabase,
+} from './database.js';
 import { ActiveLibraryManager, type LibraryMenuAction } from './library-manager.js';
 import { LibraryHistoryRegistry, type KnownLibrary } from './library-history.js';
 import {
@@ -171,6 +176,9 @@ function registerIpcHandlers(): void {
     refreshApplicationMenu();
   });
   registerIpcHandler('documents:list', () => getDatabase().listDocuments());
+  registerIpcHandler('documents:list-catalog', (_event, options: DocumentCatalogOptions) =>
+    getDatabase().listDocumentCatalog(options)
+  );
   registerIpcHandler('documents:list-deleted', () => getDatabase().listDeletedDocuments());
   registerIpcHandler('folders:list', () => getDatabase().listFolders());
   registerIpcHandler('folders:create', (_event, parentId: number | null) => getDatabase().createFolder(parentId));

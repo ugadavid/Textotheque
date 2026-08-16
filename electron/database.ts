@@ -5,6 +5,31 @@ import path from 'node:path';
 export type ContentFormat = 'plain' | 'markdown' | 'rich';
 export type DocumentStatus = 'draft' | 'active' | 'to_review' | 'final' | 'archived';
 export type SpecialDocumentRole = 'todo';
+export type CatalogSortField =
+  | 'title'
+  | 'folder'
+  | 'status'
+  | 'favorite'
+  | 'created_at'
+  | 'updated_at';
+export type CatalogSortDirection = 'asc' | 'desc';
+
+export interface DocumentCatalogOptions {
+  sortBy: CatalogSortField;
+  direction: CatalogSortDirection;
+}
+
+export interface CatalogDocument {
+  id: number;
+  title: string;
+  folderId: number | null;
+  folderName: string | null;
+  status: DocumentStatus;
+  favorite: boolean;
+  createdAt: string;
+  updatedAt: string;
+  specialRole: SpecialDocumentRole | null;
+}
 
 export interface TextDocument {
   id: number;
@@ -678,6 +703,52 @@ export class TextothequeDatabase {
          ORDER BY updated_at DESC, id DESC`
       )
       .all() as TextDocument[];
+  }
+
+  listDocumentCatalog(options: DocumentCatalogOptions): CatalogDocument[] {
+    const sortExpressions: Record<CatalogSortField, string[]> = {
+      title: ['d.title COLLATE NOCASE'],
+      folder: ['f.name IS NULL', 'f.name COLLATE NOCASE'],
+      status: ['d.status COLLATE NOCASE'],
+      favorite: ['d.favorite'],
+      created_at: ['d.created_at'],
+      updated_at: ['d.updated_at'],
+    };
+    const sortBy = options?.sortBy;
+    if (!Object.prototype.hasOwnProperty.call(sortExpressions, sortBy)) {
+      throw new Error(`Champ de tri catalogue inconnu: ${String(sortBy)}.`);
+    }
+    const sqlDirection = options?.direction === 'asc'
+      ? 'ASC'
+      : options?.direction === 'desc'
+        ? 'DESC'
+        : null;
+    if (!sqlDirection) {
+      throw new Error(`Direction de tri catalogue inconnue: ${String(options?.direction)}.`);
+    }
+    const orderBy = [
+      ...sortExpressions[sortBy as CatalogSortField].map((expression) => `${expression} ${sqlDirection}`),
+      `d.id ${sqlDirection}`,
+    ].join(', ');
+    const rows = this.db
+      .prepare(
+        `SELECT d.id AS id,
+                d.title AS title,
+                d.folder_id AS folderId,
+                f.name AS folderName,
+                d.status AS status,
+                d.favorite AS favorite,
+                d.created_at AS createdAt,
+                d.updated_at AS updatedAt,
+                d.special_role AS specialRole
+         FROM documents d
+         LEFT JOIN folders f ON f.id = d.folder_id
+         WHERE d.deleted_at IS NULL
+         ORDER BY ${orderBy}`
+      )
+      .all() as Array<Omit<CatalogDocument, 'favorite'> & { favorite: number }>;
+
+    return rows.map((row) => ({ ...row, favorite: row.favorite === 1 }));
   }
 
   listDeletedDocuments(): TextDocument[] {

@@ -46,6 +46,17 @@ app
       library: { path: candidatePath, fileName: 'created.sqlite', applicationId: 1413830735, userVersion: 3, isTextotheque: true },
     }));
     ipcMain.handle('documents:list', () => []);
+    ipcMain.handle('documents:list-catalog', (_event, options) => [{
+      id: 3,
+      title: 'Catalogue',
+      folderId: null,
+      folderName: null,
+      status: 'active',
+      favorite: true,
+      createdAt: '2026-07-09T00:00:00.000Z',
+      updatedAt: '2026-07-09T00:01:00.000Z',
+      specialRole: options.sortBy === 'updated_at' && options.direction === 'desc' ? 'todo' : null,
+    }]);
     ipcMain.handle('documents:list-deleted', () => []);
     ipcMain.handle('documents:create', (_event, folderId = null) => ({
       id: 1,
@@ -132,6 +143,7 @@ app
         if (typeof api.setDocumentExportAvailable !== 'function') return { ok: false, reason: 'setDocumentExportAvailable missing' };
         if (typeof api.onFileMenuAction !== 'function') return { ok: false, reason: 'onFileMenuAction missing' };
         if (typeof api.listDocuments !== 'function') return { ok: false, reason: 'listDocuments missing' };
+        if (typeof api.listDocumentCatalog !== 'function') return { ok: false, reason: 'listDocumentCatalog missing' };
         if (typeof api.listDeletedDocuments !== 'function') return { ok: false, reason: 'listDeletedDocuments missing' };
         if (typeof api.createDocument !== 'function') return { ok: false, reason: 'createDocument missing' };
         if (typeof api.getOrCreateSpecialDocument !== 'function') return { ok: false, reason: 'getOrCreateSpecialDocument missing' };
@@ -147,6 +159,7 @@ app
           unhandledRejections.push(String(event.reason));
         });
         const documents = await api.listDocuments();
+        const catalogDocuments = await api.listDocumentCatalog({ sortBy: 'updated_at', direction: 'desc' });
         const libraryInfo = await api.getLibraryInfo();
         const startupNotice = await api.getLibraryStartupNotice();
         const canceledBackup = await api.backupLibrary();
@@ -183,6 +196,11 @@ app
         await new Promise((resolve) => setTimeout(resolve, 0));
         return {
           ok: Array.isArray(documents) &&
+            catalogDocuments.length === 1 &&
+            catalogDocuments[0].title === 'Catalogue' &&
+            catalogDocuments[0].favorite === true &&
+            catalogDocuments[0].specialRole === 'todo' &&
+            !Object.prototype.hasOwnProperty.call(catalogDocuments[0], 'content') &&
             libraryInfo.fileName === 'textotheque.sqlite' &&
             libraryInfo.applicationId === 1413830735 &&
             libraryInfo.userVersion === 3 &&

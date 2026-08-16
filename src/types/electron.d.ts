@@ -1,4 +1,5 @@
 import type { DocumentInput, Folder, SpecialDocumentRole, TextDocument } from './document';
+import type { CatalogDocument, DocumentCatalogOptions } from './catalog';
 import type { LibraryBackupResult, LibraryCreateResult, LibraryCreateSelection, LibraryInfo, LibraryMenuAction, LibraryOpenResult } from './library';
 import type { FileMenuAction, TextExportDraft, TextExportResult } from './text-export';
 
@@ -18,6 +19,7 @@ declare global {
       setDocumentExportAvailable: (available: boolean) => Promise<void>;
       onFileMenuAction: (callback: (action: FileMenuAction) => void) => () => void;
       listDocuments: () => Promise<TextDocument[]>;
+      listDocumentCatalog: (options: DocumentCatalogOptions) => Promise<CatalogDocument[]>;
       listDeletedDocuments: () => Promise<TextDocument[]>;
       listFolders: () => Promise<Folder[]>;
       createFolder: (parentId: number | null) => Promise<Folder>;
