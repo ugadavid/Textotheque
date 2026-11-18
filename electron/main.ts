@@ -4,6 +4,7 @@ import {
   dialog,
   ipcMain,
   Menu,
+  nativeTheme,
   type IpcMainInvokeEvent,
   type MenuItemConstructorOptions,
   type OpenDialogOptions,
@@ -98,6 +99,12 @@ function registerIpcHandler<Args extends unknown[], Result>(
 }
 
 function registerIpcHandlers(): void {
+  registerIpcHandler('view:set-theme', (_event, theme: 'light' | 'dark') => {
+    if (theme !== 'light' && theme !== 'dark') throw new Error('Thème inconnu.');
+    nativeTheme.themeSource = theme;
+    const choice = Menu.getApplicationMenu()?.getMenuItemById(`theme-${theme}`);
+    if (choice) choice.checked = true;
+  });
   registerIpcHandler('library:get-info', () => getDatabase().getLibraryInfo());
   registerIpcHandler('library:get-startup-notice', () => getLibraryManager().getStartupNotice());
   registerIpcHandler('library:inspect', (_event, candidatePath: string) => getLibraryManager().inspectCandidate(candidatePath));
@@ -328,6 +335,19 @@ function refreshApplicationMenu(): void {
         { label: 'Sauvegarder une copie…', click: () => sendLibraryMenuAction({ action: 'backup' }) },
       ],
     },
+    {
+      label: 'Affichage',
+      submenu: [{
+        label: 'Thème',
+        submenu: (['light', 'dark'] as const).map((theme) => ({
+          id: `theme-${theme}`,
+          label: theme === 'light' ? 'Clair' : 'Sombre',
+          type: 'radio',
+          checked: nativeTheme.themeSource === theme || (theme === 'light' && nativeTheme.themeSource === 'system'),
+          click: () => mainWindow?.webContents.send('view:choose-theme', theme),
+        })),
+      }],
+    },
     buildSearchMenu(savedSearches, searchMenuState, sendSearchMenuAction),
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
@@ -337,7 +357,7 @@ async function createWindow(show = true): Promise<void> {
   closeApproved = false;
   documentExportAvailable = false;
   mainWindow = new BrowserWindow({
-    show,
+    show: false,
     width: 1280,
     height: 820,
     minWidth: 980,
@@ -352,8 +372,12 @@ async function createWindow(show = true): Promise<void> {
   });
 
   const rendererTarget = resolveRendererTarget(app.isPackaged, __dirname);
-  if (rendererTarget.kind === 'url') await mainWindow.loadURL(rendererTarget.value);
-  else await mainWindow.loadFile(rendererTarget.value);
+  try {
+    if (rendererTarget.kind === 'url') await mainWindow.loadURL(rendererTarget.value);
+    else await mainWindow.loadFile(rendererTarget.value);
+  } finally {
+    if (show) mainWindow.show();
+  }
 
   refreshApplicationMenu();
 

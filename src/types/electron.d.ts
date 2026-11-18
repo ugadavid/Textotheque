@@ -8,6 +8,8 @@ import type { FileMenuAction, TextExportDraft, TextExportResult } from './text-e
 declare global {
   interface Window {
     textotheque: {
+      setTheme: (theme: 'light' | 'dark') => Promise<void>;
+      onThemeChoice: (callback: (theme: 'light' | 'dark') => void) => () => void;
       getLibraryInfo: () => Promise<LibraryInfo>;
       getLibraryStartupNotice: () => Promise<string | null>;
       backupLibrary: () => Promise<LibraryBackupResult>;

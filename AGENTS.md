@@ -1105,6 +1105,7 @@ Clés actuelles importantes :
 textotheque:expanded-folders:v2
 textotheque:pane-layout:v2
 textotheque:editor-positions:v1:<chemin de la bibliothèque>
+textotheque:theme:v1 (light ou dark, global au profil)
 ```
 
 Les anciennes clés peuvent rester présentes pour compatibilité historique, mais ne doivent pas redevenir la source principale.

@@ -20,6 +20,12 @@ import type { SearchMenuAction, SearchMenuState } from './search-menu.js';
 const { contextBridge, ipcRenderer } = require('electron') as typeof import('electron');
 
 const api = {
+  setTheme: (theme: 'light' | 'dark'): Promise<void> => ipcRenderer.invoke('view:set-theme', theme),
+  onThemeChoice: (callback: (theme: 'light' | 'dark') => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, theme: 'light' | 'dark') => callback(theme);
+    ipcRenderer.on('view:choose-theme', listener);
+    return () => ipcRenderer.removeListener('view:choose-theme', listener);
+  },
   getLibraryInfo: (): Promise<LibraryInfo> => ipcRenderer.invoke('library:get-info'),
   getLibraryStartupNotice: (): Promise<string | null> => ipcRenderer.invoke('library:get-startup-notice'),
   backupLibrary: (): Promise<LibraryBackupResult> => ipcRenderer.invoke('library:backup'),
