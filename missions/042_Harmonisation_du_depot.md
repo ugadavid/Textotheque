@@ -31,6 +31,7 @@ Faire adopter à Textothèque le même passage de relais ChatGPT → GitHub → 
   vers :
   `reports/041_Installation_et_recette_sur-CODEX_VM.md`
 - Le document 041 conserve son titre historique TXT-VM-001 à l'intérieur si utile à la provenance, mais son emplacement et sa numérotation répondent à la nouvelle convention.
+- **Exigence explicite d'état final :** supprimer l'ancien fichier de l'arbre courant de `main` après déplacement ; aucun doublon, copie de compatibilité, alias ou fichier factice ne doit demeurer sous `reports/TXT-VM-001/`. Le dossier vide disparaît naturellement de Git. L'ancien chemin reste consultable uniquement via les commits historiques, sans réécriture d'historique.
 - Ne pas recopier dans Git les bases SQLite, journaux personnels ou captures de données réelles.
 - Corriger uniquement les références devenues inexactes vers l'ancien emplacement, sans réécrire les anciens commits.
 - Ne pas supprimer d'autres rapports, répertoires ou informations historiques.
