@@ -1104,6 +1104,7 @@ Clés actuelles importantes :
 ```text
 textotheque:expanded-folders:v2
 textotheque:pane-layout:v2
+textotheque:editor-positions:v1:<chemin de la bibliothèque>
 ```
 
 Les anciennes clés peuvent rester présentes pour compatibilité historique, mais ne doivent pas redevenir la source principale.

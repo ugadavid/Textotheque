@@ -1,16 +1,11 @@
-import { useLayoutEffect, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useLayoutEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject } from 'react';
 import type { TextDocument } from '../types/document';
-
-export interface EditorPosition {
-  start: number;
-  end: number;
-  direction: HTMLTextAreaElement['selectionDirection'];
-  scrollTop: number;
-  scrollLeft: number;
-}
+import { persistEditorPositions, type EditorPosition } from '../services/editor-positions';
 
 interface EditorPaneProps {
   positions: Map<number, EditorPosition>;
+  libraryPath?: string;
+  capturePositionRef: MutableRefObject<(() => void) | null>;
   document: TextDocument | null;
   title: string;
   content: string;
@@ -45,18 +40,20 @@ const saveLabels = {
   error: 'Erreur',
 };
 
-interface ContentEditorProps extends Pick<EditorPaneProps, 'positions' | 'content' | 'isDeleted' | 'onContentChange'> {
+interface ContentEditorProps extends Pick<EditorPaneProps, 'positions' | 'libraryPath' | 'capturePositionRef' | 'content' | 'isDeleted' | 'onContentChange'> {
   documentId: number;
 }
 
-function ContentEditor({ documentId, positions, content, isDeleted, onContentChange }: ContentEditorProps) {
+function ContentEditor({ documentId, positions, libraryPath, capturePositionRef, content, isDeleted, onContentChange }: ContentEditorProps) {
   const contentEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const pendingCaretPositionRef = useRef<number | null>(null);
+  const initialPosition = useRef<EditorPosition>();
 
   // On departure the keyed textarea still contains this document's text.
   useLayoutEffect(() => {
     const editor = contentEditorRef.current!;
-    return () => {
+    initialPosition.current = positions.get(documentId);
+    function capture() {
       positions.set(documentId, {
         start: editor.selectionStart,
         end: editor.selectionEnd,
@@ -64,10 +61,15 @@ function ContentEditor({ documentId, positions, content, isDeleted, onContentCha
         scrollTop: editor.scrollTop,
         scrollLeft: editor.scrollLeft,
       });
+      persistEditorPositions(libraryPath, positions);
+    }
+    capturePositionRef.current = capture;
+    return () => {
+      capture();
+      capturePositionRef.current = null;
     };
-  }, [positions, documentId]);
+  }, [positions, documentId, libraryPath, capturePositionRef]);
 
-  const initialPosition = useRef(positions.get(documentId));
   useLayoutEffect(() => {
     const caretPosition = pendingCaretPositionRef.current;
     const editor = contentEditorRef.current!;
@@ -83,7 +85,7 @@ function ContentEditor({ documentId, positions, content, isDeleted, onContentCha
       editor.scrollLeft = saved.scrollLeft;
       initialPosition.current = undefined;
     }
-  }, [content]);
+  }, [content, positions]);
 
   function handleContentKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
     if (
@@ -121,6 +123,8 @@ function ContentEditor({ documentId, positions, content, isDeleted, onContentCha
 
 export default function EditorPane({
   positions,
+  libraryPath,
+  capturePositionRef,
   document,
   title,
   content,
@@ -245,6 +249,8 @@ export default function EditorPane({
           key={document.id}
           documentId={document.id}
           positions={positions}
+          libraryPath={libraryPath}
+          capturePositionRef={capturePositionRef}
           content={content}
           isDeleted={isDeleted}
           onContentChange={onContentChange}

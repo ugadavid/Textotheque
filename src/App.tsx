@@ -7,7 +7,8 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import EditorPane, { type EditorPosition } from './components/EditorPane';
+import EditorPane from './components/EditorPane';
+import { loadEditorPositions } from './services/editor-positions';
 import DocumentCatalog from './components/DocumentCatalog';
 import MetadataPane from './components/MetadataPane';
 import NavigationPane from './components/NavigationPane';
@@ -237,8 +238,9 @@ export default function App() {
   const [folderId, setFolderId] = useState<number | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [error, setError] = useState<string | null>(null);
-  const [editorPositions, setEditorPositions] = useState(() => new Map<number, EditorPosition>());
   const [libraryInfo, setLibraryInfo] = useState<LibraryInfo | null>(null);
+  const editorPositions = useMemo(() => loadEditorPositions(libraryInfo?.path), [libraryInfo?.path]);
+  const capturePositionRef = useRef<(() => void) | null>(null);
   const [libraryBackupState, setLibraryBackupState] = useState<LibraryBackupState>('idle');
   const [libraryOpenState, setLibraryOpenState] = useState<LibraryOpenState>('idle');
   const [libraryNotice, setLibraryNotice] = useState<string | null>(null);
@@ -615,6 +617,7 @@ export default function App() {
         try {
           if (await confirmDiscardUnsavedChanges()) {
             setError(null);
+            capturePositionRef.current?.();
             await window.textotheque.approveClose();
           }
         } catch (closeError: unknown) {
@@ -1113,7 +1116,6 @@ export default function App() {
   }
 
   function clearWorkspaceForLibrarySwitch(nextLibrary: LibraryInfo): void {
-    setEditorPositions(new Map());
     invalidateEditorContext();
     setDocuments([]);
     setCatalogDocuments([]);
@@ -1945,6 +1947,8 @@ export default function App() {
           onOpenSavedSearch={(id) => { void handleOpenSavedSearch(id); }}
         /> : <EditorPane
           positions={editorPositions}
+          libraryPath={libraryInfo?.path}
+          capturePositionRef={capturePositionRef}
           document={selectedDocument}
           title={title}
           content={content}

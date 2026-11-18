@@ -3,7 +3,7 @@ const { spawn } = require('node:child_process');
 const { createTestTempDirectory, removeTestTempDirectory } = require('./test-temp-directory.cjs');
 
 // This function runs in the real renderer. Navigation always goes through the UI.
-async function checkEditor(phase) {
+async function checkEditor(phase, expectedDocuments) {
   const find = (selector) => document.querySelector(selector);
   const editor = () => find('.content-editor');
   const title = () => find('.title-input')?.value;
@@ -45,22 +45,77 @@ async function checkEditor(phase) {
     check(!find('.title-dirty-marker'), 'Faux dirty après restauration');
   }
 
-  const inSecondLibrary = phase !== 'first';
+  const inSecondLibrary = phase === 'switch' || phase === 'restart';
   const file = inSecondLibrary ? 'second.sqlite' : 'first.sqlite';
   await wait(() => find('.library-name')?.textContent.includes(file), 'Bibliothèque ' + file);
+  const library = await api.getLibraryInfo();
+  const key = 'textotheque:editor-positions:v1:' + library.path;
+  async function checkDocument(name) {
+    const saved = expectedDocuments.find((entry) => entry.title === name);
+    const current = await api.getDocument(saved.id);
+    check(current.updated_at === saved.updated_at && current.content === saved.content &&
+      !find('.title-dirty-marker'), 'Écriture métier à la restauration : ' + name);
+  }
+  async function showCatalog() {
+    find('.nav-view-button').click();
+    await wait(() => find('.catalog-row') && !editor(), 'Catalogue visible');
+  }
+  if (phase === 'restart') {
+    // The last open library contains only Gamma: verify its very first mount,
+    // before a second navigation could accidentally repair startup restoration.
+    await wait(() => title() === 'Gamma' && editor(), 'Gamma au démarrage');
+    expectPosition([8200, 8400, 'backward', 3400, 0]);
+    await checkDocument('Gamma');
+  }
   find('.nav-view-button').click();
   if (inSecondLibrary) {
     await open('Gamma');
     const gamma = (await api.listDocuments())[0];
-    check(gamma.id === 1 && editor().selectionStart === editor().selectionEnd &&
-      editor().scrollTop === 0, 'Position héritée sur Gamma');
+    check(gamma.id === 1, 'ID commun à Alpha et Gamma');
     if (phase === 'switch') {
+      check(editor().selectionStart === editor().selectionEnd && editor().scrollTop === 0, 'Position héritée sur Gamma');
       const lastPosition = place(6400, 6500, 'backward', 1800);
       find('.advanced-search-button').click();
       await wait(() => find('.advanced-search-panel'), 'Recherche dans la seconde bibliothèque');
       find('.advanced-search-button').click();
       await wait(editor, 'Retour à Gamma');
       expectPosition(lastPosition);
+      // Leave the last position only in the live textarea until win.close().
+      place(8200, 8400, 'backward', 3400);
+      return [gamma];
+    }
+    return;
+  }
+
+  if (phase === 'reopen-first') {
+    await open('Alpha');
+    expectPosition([7000, 7110, 'backward', 2000, 0]);
+    await checkDocument('Alpha');
+    await open('Beta');
+    expectPosition([1500, 1500, 'forward', 750, 0]);
+    await checkDocument('Beta');
+    const alpha = expectedDocuments.find((doc) => doc.title === 'Alpha');
+    await api.updateDocument(alpha.id, {...alpha, content: 'court'});
+    await showCatalog();
+    const entries = JSON.parse(localStorage.getItem(key));
+    check(Object.keys(entries['1']).sort().join() === 'direction,end,scrollLeft,scrollTop,start',
+      'La préférence doit contenir uniquement les coordonnées');
+    entries['2'].scrollTop = 'invalide';
+    localStorage.setItem(key, JSON.stringify(entries));
+    return;
+  }
+  if (phase === 'short' || phase === 'corrupt') {
+    await open('Alpha');
+    if (phase === 'short') {
+      check(editor().value === 'court' && editor().selectionStart === 5 && editor().selectionEnd === 5 &&
+        editor().scrollTop === 0, 'Bornage au redémarrage malgré une entrée voisine invalide');
+    }
+    await open('Beta');
+    check(editor().selectionStart === editor().selectionEnd && editor().scrollTop === 0 &&
+      !find('.error-message'), 'Préférence corrompue bloquante');
+    if (phase === 'short') {
+      await showCatalog();
+      localStorage.setItem(key, '{json invalide');
     }
     return;
   }
@@ -111,14 +166,20 @@ async function checkEditor(phase) {
   await open('Beta');
   check(editor().selectionStart === 5 && editor().selectionEnd === 5 && editor().scrollTop === 0, 'Bornage du texte raccourci');
   await open('Alpha');
+  await api.updateDocument(beta.id, beta);
+  await open('Beta');
+  place(1500, 1500, 'forward', 750);
+  await open('Alpha');
   place(7000, 7110, 'backward', 2000);
+  return api.listDocuments();
 }
 
-async function runElectron(temp, restart) {
+async function runElectron(temp, phase) {
   const { app } = require('electron');
+  const fs = require('node:fs');
   app.setPath('appData', temp);
   const second = path.join(temp, 'second.sqlite');
-  if (!restart) {
+  if (phase === 'first') {
     const { createNewTextothequeDatabase } = await import('../dist-electron/database.js');
     for (const [file, names] of [[process.env.TEXTOTHEQUE_DB_PATH, ['Alpha', 'Beta']], [second, ['Gamma']]]) {
       const db = createNewTextothequeDatabase(file);
@@ -132,15 +193,22 @@ async function runElectron(temp, restart) {
   }
   app.once('browser-window-created', (_, win) => {
     win.webContents.once('did-finish-load', async () => {
-      const run = (phase) => win.webContents.executeJavaScript('(' + checkEditor.toString() + ')(' + JSON.stringify(phase) + ')');
+      const baseline = path.join(temp, 'expected-documents.json');
+      const run = (step, docs = []) => win.webContents.executeJavaScript(
+        '(' + checkEditor.toString() + ')(' + JSON.stringify(step) + ',' + JSON.stringify(docs) + ')');
       try {
-        if (restart) await run('restart');
-        else {
-          await run('first');
+        if (phase === 'first') {
+          const firstDocs = await run('first');
           win.webContents.send('library:menu-action', { action: 'known', path: second });
-          await run('switch');
-        }
-        console.log(restart ? 'Nouvelle session OK' : 'Positions, Tab, autosave, recherche et changement de bibliothèque OK');
+          const secondDocs = await run('switch');
+          fs.writeFileSync(baseline, JSON.stringify([...firstDocs, ...secondDocs]));
+        } else if (phase === 'restart') {
+          const docs = JSON.parse(fs.readFileSync(baseline, 'utf8'));
+          await run('restart', docs);
+          win.webContents.send('library:menu-action', { action: 'known', path: process.env.TEXTOTHEQUE_DB_PATH });
+          await run('reopen-first', docs);
+        } else await run(phase);
+        console.log('Positions éditeur OK : ' + phase);
         win.close();
       } catch (error) { console.error(error); app.exit(1); }
     });
@@ -153,7 +221,7 @@ async function runTest() {
   const server = await preview({ preview: { port: 5173, strictPort: true } });
   const temp = createTestTempDirectory('editor-position');
   try {
-    for (const phase of ['first', 'restart']) {
+    for (const phase of ['first', 'restart', 'short', 'corrupt']) {
       const child = spawn(require('electron'), [__filename, '--fixture', phase, '--user-data-dir=' + temp], {
         stdio: 'inherit', timeout: 45000,
         env: {...process.env, TEXTOTHEQUE_DB_PATH: path.join(temp, 'first.sqlite'),
@@ -172,5 +240,5 @@ async function runTest() {
 }
 
 (process.argv.includes('--fixture')
-  ? runElectron(path.dirname(process.env.TEXTOTHEQUE_DB_PATH), process.argv.includes('restart'))
+  ? runElectron(path.dirname(process.env.TEXTOTHEQUE_DB_PATH), process.argv[process.argv.indexOf('--fixture') + 1])
   : runTest()).catch((error) => { console.error(error); process.exitCode = 1; });
