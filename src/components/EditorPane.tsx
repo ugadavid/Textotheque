@@ -1,7 +1,16 @@
 import { useLayoutEffect, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { TextDocument } from '../types/document';
 
+export interface EditorPosition {
+  start: number;
+  end: number;
+  direction: HTMLTextAreaElement['selectionDirection'];
+  scrollTop: number;
+  scrollLeft: number;
+}
+
 interface EditorPaneProps {
+  positions: Map<number, EditorPosition>;
   document: TextDocument | null;
   title: string;
   content: string;
@@ -36,7 +45,82 @@ const saveLabels = {
   error: 'Erreur',
 };
 
+interface ContentEditorProps extends Pick<EditorPaneProps, 'positions' | 'content' | 'isDeleted' | 'onContentChange'> {
+  documentId: number;
+}
+
+function ContentEditor({ documentId, positions, content, isDeleted, onContentChange }: ContentEditorProps) {
+  const contentEditorRef = useRef<HTMLTextAreaElement | null>(null);
+  const pendingCaretPositionRef = useRef<number | null>(null);
+
+  // On departure the keyed textarea still contains this document's text.
+  useLayoutEffect(() => {
+    const editor = contentEditorRef.current!;
+    return () => {
+      positions.set(documentId, {
+        start: editor.selectionStart,
+        end: editor.selectionEnd,
+        direction: editor.selectionDirection,
+        scrollTop: editor.scrollTop,
+        scrollLeft: editor.scrollLeft,
+      });
+    };
+  }, [positions, documentId]);
+
+  const initialPosition = useRef(positions.get(documentId));
+  useLayoutEffect(() => {
+    const caretPosition = pendingCaretPositionRef.current;
+    const editor = contentEditorRef.current!;
+    const saved = initialPosition.current;
+    if (caretPosition !== null) {
+      editor.focus();
+      editor.setSelectionRange(caretPosition, caretPosition);
+      pendingCaretPositionRef.current = null;
+    } else if (saved) {
+      const length = editor.value.length;
+      editor.setSelectionRange(Math.min(saved.start, length), Math.min(saved.end, length), saved.direction);
+      editor.scrollTop = saved.scrollTop;
+      editor.scrollLeft = saved.scrollLeft;
+      initialPosition.current = undefined;
+    }
+  }, [content]);
+
+  function handleContentKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
+    if (
+      event.key !== 'Tab' ||
+      event.shiftKey ||
+      event.ctrlKey ||
+      event.altKey ||
+      event.metaKey ||
+      isDeleted
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    const selectionStart = event.currentTarget.selectionStart;
+    const selectionEnd = event.currentTarget.selectionEnd;
+    const caretPosition = selectionStart + 1;
+    const nextContent = `${content.slice(0, selectionStart)}\t${content.slice(selectionEnd)}`;
+    pendingCaretPositionRef.current = nextContent === content ? null : caretPosition;
+    onContentChange(nextContent);
+    event.currentTarget.setSelectionRange(caretPosition, caretPosition);
+  }
+
+  return <textarea
+    ref={contentEditorRef}
+    className="content-editor"
+    value={content}
+    onChange={(event) => onContentChange(event.target.value)}
+    onKeyDown={handleContentKeyDown}
+    placeholder="Ecrire ici..."
+    spellCheck="true"
+    disabled={isDeleted}
+  />;
+}
+
 export default function EditorPane({
+  positions,
   document,
   title,
   content,
@@ -62,39 +146,6 @@ export default function EditorPane({
   onTrash,
   onRestore,
 }: EditorPaneProps) {
-  const contentEditorRef = useRef<HTMLTextAreaElement | null>(null);
-  const pendingCaretPositionRef = useRef<number | null>(null);
-
-  useLayoutEffect(() => {
-    const caretPosition = pendingCaretPositionRef.current;
-    if (caretPosition === null || !contentEditorRef.current) return;
-
-    contentEditorRef.current.focus();
-    contentEditorRef.current.setSelectionRange(caretPosition, caretPosition);
-    pendingCaretPositionRef.current = null;
-  }, [content]);
-
-  function handleContentKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
-    if (
-      event.key !== 'Tab' ||
-      event.shiftKey ||
-      event.ctrlKey ||
-      event.altKey ||
-      event.metaKey ||
-      isDeleted
-    ) {
-      return;
-    }
-
-    event.preventDefault();
-    const selectionStart = event.currentTarget.selectionStart;
-    const selectionEnd = event.currentTarget.selectionEnd;
-    const caretPosition = selectionStart + 1;
-    pendingCaretPositionRef.current = caretPosition;
-    onContentChange(`${content.slice(0, selectionStart)}\t${content.slice(selectionEnd)}`);
-    event.currentTarget.setSelectionRange(caretPosition, caretPosition);
-  }
-
   return (
     <section className="pane editor-pane">
       <header className="editor-toolbar">
@@ -190,15 +241,13 @@ export default function EditorPane({
 
       {error ? <p className="error-message">{error}</p> : null}
       {notice ? <p className="success-message" role="status">{notice}</p> : null}
-      {document ? <textarea
-          ref={contentEditorRef}
-          className="content-editor"
-          value={content}
-          onChange={(event) => onContentChange(event.target.value)}
-          onKeyDown={handleContentKeyDown}
-          placeholder="Ecrire ici..."
-          spellCheck="true"
-          disabled={isDeleted}
+      {document ? <ContentEditor
+          key={document.id}
+          documentId={document.id}
+          positions={positions}
+          content={content}
+          isDeleted={isDeleted}
+          onContentChange={onContentChange}
         /> : <div className="empty-editor-content">
           <h2>Aucun document sélectionné</h2>
           <p>Créez un texte ou choisissez-en un dans la bibliothèque.</p>

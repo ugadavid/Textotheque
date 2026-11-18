@@ -7,7 +7,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import EditorPane from './components/EditorPane';
+import EditorPane, { type EditorPosition } from './components/EditorPane';
 import DocumentCatalog from './components/DocumentCatalog';
 import MetadataPane from './components/MetadataPane';
 import NavigationPane from './components/NavigationPane';
@@ -237,6 +237,7 @@ export default function App() {
   const [folderId, setFolderId] = useState<number | null>(null);
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [error, setError] = useState<string | null>(null);
+  const [editorPositions, setEditorPositions] = useState(() => new Map<number, EditorPosition>());
   const [libraryInfo, setLibraryInfo] = useState<LibraryInfo | null>(null);
   const [libraryBackupState, setLibraryBackupState] = useState<LibraryBackupState>('idle');
   const [libraryOpenState, setLibraryOpenState] = useState<LibraryOpenState>('idle');
@@ -522,7 +523,7 @@ export default function App() {
 
   const focusEditor = useCallback(() => {
     window.requestAnimationFrame(() => {
-      document.querySelector<HTMLTextAreaElement>('.content-editor')?.focus();
+      document.querySelector<HTMLTextAreaElement>('.content-editor')?.focus({ preventScroll: true });
     });
   }, []);
 
@@ -1112,6 +1113,7 @@ export default function App() {
   }
 
   function clearWorkspaceForLibrarySwitch(nextLibrary: LibraryInfo): void {
+    setEditorPositions(new Map());
     invalidateEditorContext();
     setDocuments([]);
     setCatalogDocuments([]);
@@ -1942,6 +1944,7 @@ export default function App() {
           onDeleteSavedSearch={() => { void handleDeleteSavedSearch(); }}
           onOpenSavedSearch={(id) => { void handleOpenSavedSearch(id); }}
         /> : <EditorPane
+          positions={editorPositions}
           document={selectedDocument}
           title={title}
           content={content}
