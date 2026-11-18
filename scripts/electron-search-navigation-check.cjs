@@ -42,7 +42,11 @@ async function exerciseNavigation() {
   if (find('#catalog-title').textContent !== 'Recherche' || find('.catalog-heading .eyebrow')) throw Error('En-tête redondant');
   const button = find('.advanced-search-button').getBoundingClientRect();
   const chevron = toggle().getBoundingClientRect();
-  if (Math.abs(chevron.top - button.top) > 5 || chevron.left < button.right || chevron.left - button.right > 6) throw Error('Chevron éloigné');
+  const gap = chevron.left - button.right;
+  const centerOffset = (chevron.top + chevron.height / 2) - (button.top + button.height / 2);
+  if (gap < 7 || gap > 13 || Math.abs(centerOffset) > 4) {
+    throw Error('Espacement ou alignement inattendu entre le bouton et le chevron');
+  }
   const firstRow = row('Beta');
   toggle().click();
   await waitFor(() => !panel() && toggle().ariaExpanded === 'false', 'Repli indépendant');

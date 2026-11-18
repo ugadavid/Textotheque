@@ -611,18 +611,19 @@ h2 {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-start;
-  gap: 6px;
+  gap: 8px 10px;
   margin-bottom: 8px;
 }
 
 .search-header .toolbar-search {
-  flex: 1 1 145px;
+  flex: 1 1 12rem;
+  max-width: 18rem;
 }
 
 .advanced-search-actions {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 10px;
 }
 
 .search-criteria-toggle {
