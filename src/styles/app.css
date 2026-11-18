@@ -607,6 +607,48 @@ h2 {
   min-width: 0;
 }
 
+.catalog-header.search-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.search-header .toolbar-search {
+  flex: 1 1 145px;
+}
+
+.advanced-search-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.search-criteria-toggle {
+  display: grid;
+  width: 26px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid #cfc5b7;
+  border-radius: 6px;
+  background: #fffdf9;
+  color: #5f5349;
+  cursor: pointer;
+}
+
+.search-criteria-toggle span {
+  width: 7px;
+  height: 7px;
+  border: solid currentColor;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.search-criteria-toggle[aria-expanded="true"] span {
+  transform: rotate(225deg);
+}
+
 .active-saved-search-label {
   margin: 2px 0 0;
   color: #75695e;

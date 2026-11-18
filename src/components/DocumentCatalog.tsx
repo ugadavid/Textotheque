@@ -45,8 +45,8 @@ interface DocumentCatalogProps {
   navigationVisible: boolean;
   metadataVisible: boolean;
   isTodo: boolean;
-  title: string;
-  eyebrow: string;
+  searching: boolean;
+  onAdvancedSearch: () => void;
   folders: Folder[];
   activeSavedSearchName: string | null;
   activeSavedSearchId: number | null;
@@ -195,8 +195,8 @@ export default function DocumentCatalog({
   navigationVisible,
   metadataVisible,
   isTodo,
-  title,
-  eyebrow,
+  searching,
+  onAdvancedSearch,
   folders,
   activeSavedSearchName,
   activeSavedSearchId,
@@ -231,7 +231,7 @@ export default function DocumentCatalog({
 
   return (
     <section className="pane editor-pane document-catalog" aria-labelledby="catalog-title">
-      <header className="editor-toolbar catalog-header">
+      <header className={searching ? "editor-toolbar catalog-header search-header" : "editor-toolbar catalog-header"}>
         <button
           className={navigationVisible ? 'pane-toggle-button toggle-navigation-button active' : 'pane-toggle-button toggle-navigation-button'}
           type="button"
@@ -253,8 +253,8 @@ export default function DocumentCatalog({
           TODO
         </button>
         <div className="catalog-heading">
-          <p className="eyebrow">{eyebrow}</p>
-          <h1 id="catalog-title">{title}</h1>
+          {!searching && <p className="eyebrow">Bibliothèque</p>}
+          <h1 id="catalog-title">{searching ? 'Recherche' : 'Tous les textes'}</h1>
           {activeSavedSearchName ? <p className="active-saved-search-label">
             Recherche enregistrée : {activeSavedSearchName}{savedSearchModified ? ' — modifiée' : ''}
           </p> : null}
@@ -272,14 +272,25 @@ export default function DocumentCatalog({
           />
           {searchQuery.trim() ? <button className="clear-search-button" type="button" onClick={onClearSearch} title="Vider la recherche" aria-label="Vider la recherche">×</button> : null}
         </div>
-        <button
-          className={searchControls.expanded ? 'advanced-search-button active' : 'advanced-search-button'}
-          type="button"
-          onClick={searchControls.onToggleExpanded}
-          aria-expanded={searchControls.expanded}
-        >
-          Recherche avancée
-        </button>
+        <div className="advanced-search-actions">
+          <button
+            className={searching ? 'advanced-search-button active' : 'advanced-search-button'}
+            type="button"
+            onClick={onAdvancedSearch}
+            aria-pressed={searching}
+            title={searching ? 'Quitter la recherche avancée' : 'Ouvrir la recherche avancée'}
+          >
+            Recherche avancée
+          </button>
+          {searching && <button
+            className="search-criteria-toggle"
+            type="button"
+            onClick={searchControls.onToggleExpanded}
+            aria-expanded={searchControls.expanded}
+            aria-label={searchControls.expanded ? 'Replier les critères' : 'Déplier les critères'}
+            title={searchControls.expanded ? 'Replier les critères' : 'Déplier les critères'}
+          ><span aria-hidden="true" /></button>}
+        </div>
         <span className="catalog-count">
           {sortBy === 'relevance' ? 'Pertinence · ' : ''}
           {documents.length} document{documents.length > 1 ? 's' : ''}

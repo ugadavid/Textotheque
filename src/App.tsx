@@ -16,6 +16,7 @@ import {
   createFolder,
   createDocument,
   emptyTrash,
+  getDocument,
   getOrCreateSpecialDocument,
   listDeletedDocuments,
   listFolders,
@@ -260,6 +261,7 @@ export default function App() {
   const [modifiedFilter, setModifiedFilter] = useState<SearchDateFilter>(emptyDateFilter);
   const [searchResults, setSearchResults] = useState<SearchDocument[]>([]);
   const [searchResultsVisible, setSearchResultsVisible] = useState(false);
+  const searchOrigin = useRef<{ documentId: number | null } | null>(null);
   const [advancedSearchExpanded, setAdvancedSearchExpanded] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchValidationMessage, setSearchValidationMessage] = useState<string | null>(null);
@@ -744,6 +746,7 @@ export default function App() {
 
   function hideSearchResults(): void {
     searchRequestRef.current += 1;
+    searchOrigin.current = null;
     setSearchResultsVisible(false);
     setSearchLoading(false);
   }
@@ -1115,6 +1118,7 @@ export default function App() {
     setCatalogVisible(false);
     searchRequestRef.current += 1;
     setSearchResults([]);
+    searchOrigin.current = null;
     setSearchResultsVisible(false);
     setSearchLoading(false);
     setSearchValidationMessage(null);
@@ -1389,7 +1393,7 @@ export default function App() {
 
   function clearSearchAndReturnToNavigation() {
     clearSavedSearchAssociation();
-    searchRequestRef.current += 1;
+    hideSearchResults();
     setSearchQuery('');
     setSearchFolderSelection({ folderIds: [], includeUnclassified: false });
     setSearchStatuses([]);
@@ -1397,8 +1401,6 @@ export default function App() {
     setCreatedFilter(emptyDateFilter());
     setModifiedFilter(emptyDateFilter());
     setSearchResults([]);
-    setSearchResultsVisible(false);
-    setSearchLoading(false);
     setSearchValidationMessage(null);
     setAdvancedSearchExpanded(false);
     setCatalogVisible(false);
@@ -1413,6 +1415,10 @@ export default function App() {
       setSelectedFolderId(selectedDocument.folder_id);
     }
 
+    restoreNavigationAfterSearch();
+  }
+
+  function restoreNavigationAfterSearch(): void {
     if (restoreHiddenNavigationAfterSearchRef.current) {
       restoreHiddenNavigationAfterSearchRef.current = false;
       setPaneLayout((current) => ({ ...current, leftVisible: false }));
@@ -1429,6 +1435,9 @@ export default function App() {
   }
 
   function activateStructuredSearch(): void {
+    if (!searchResultsVisible) {
+      searchOrigin.current = { documentId: catalogVisible ? null : selectedDocument?.id ?? null };
+    }
     setSearchResultsVisible(true);
     setAdvancedSearchExpanded(true);
     setCatalogVisible(false);
@@ -1465,9 +1474,7 @@ export default function App() {
     setSearchSortBy(criteria.sortBy);
     setSearchDirection(criteria.direction);
     setSearchValidationMessage(null);
-    setSearchResultsVisible(true);
-    setAdvancedSearchExpanded(true);
-    setCatalogVisible(false);
+    activateStructuredSearch();
     setActiveSavedSearchId(definition.id);
     setActiveSavedSearchName(definition.name);
     setSavedSearchBaseline(criteria);
@@ -1606,9 +1613,8 @@ export default function App() {
     setSearchQuery(value);
     setSearchSortBy(value.trim() ? 'relevance' : naturalStructuredSort());
     setSearchDirection(value.trim() ? 'asc' : 'desc');
-    setSearchResultsVisible(Boolean(value.trim() || hasStructuredSearchFilters));
-    setAdvancedSearchExpanded(Boolean(value.trim() || hasStructuredSearchFilters));
-    setCatalogVisible(false);
+    if (value.trim() || hasStructuredSearchFilters) activateStructuredSearch();
+    else hideSearchResults();
     if (value.trim()) {
       setPaneLayout((current) => {
         if (current.leftVisible) {
@@ -1621,21 +1627,39 @@ export default function App() {
   }
 
   function showAdvancedSearch(): void {
-    setAdvancedSearchExpanded(true);
-    setSearchResultsVisible(true);
-    setCatalogVisible(false);
+    activateStructuredSearch();
     if (!searchQuery.trim()) {
       setSearchSortBy(naturalStructuredSort());
       setSearchDirection('desc');
     }
   }
 
-  function toggleAdvancedSearch(): void {
-    if (!searchResultsVisible) {
-      showAdvancedSearch();
-      return;
+  async function leaveAdvancedSearch(): Promise<void> {
+    const origin = searchOrigin.current;
+    if (selectedDocument && origin?.documentId === selectedDocument.id) {
+      let available = false;
+      try {
+        const stored = await getDocument(selectedDocument.id);
+        available = stored !== null && Boolean(stored.deleted_at) === Boolean(selectedDocument.deleted_at);
+      } catch (loadError: unknown) {
+        logRendererError('search-return', loadError);
+      }
+      if (origin !== searchOrigin.current) return;
+      if (available || isDirtyRef.current) {
+        hideSearchResults();
+        restoreNavigationAfterSearch();
+        if (!available) setError('Document indisponible. Le texte en cours reste dans l’éditeur.');
+        return;
+      }
+      setSelectedDocument(null);
     }
-    setAdvancedSearchExpanded((current) => !current);
+
+    hideSearchResults();
+    restoreNavigationAfterSearch();
+    setDocumentView('all');
+    setSelectedFolderId(null);
+    setCatalogVisible(true);
+    void refreshCatalog();
   }
 
   function handleSearchFieldChange(field: SearchTextField, checked: boolean): void {
@@ -1722,9 +1746,7 @@ export default function App() {
     setSearchSortBy('updated_at');
     setSearchDirection('desc');
     setSearchValidationMessage(null);
-    setSearchResultsVisible(true);
-    setAdvancedSearchExpanded(true);
-    setCatalogVisible(false);
+    activateStructuredSearch();
   }
 
   function toggleNavigationPane() {
@@ -1879,15 +1901,15 @@ export default function App() {
           navigationVisible={paneLayout.leftVisible}
           metadataVisible={paneLayout.rightVisible}
           isTodo={selectedDocumentIsTodo}
-          title={searchResultsVisible ? 'Résultats de recherche' : 'Tous les textes'}
-          eyebrow={searchResultsVisible ? 'Recherche' : 'Bibliothèque'}
+          searching={searchResultsVisible}
+          onAdvancedSearch={searchResultsVisible ? leaveAdvancedSearch : showAdvancedSearch}
           folders={folders}
           activeSavedSearchName={activeSavedSearchName}
           activeSavedSearchId={activeSavedSearchId}
           savedSearchModified={savedSearchModified}
           savedSearches={savedSearches}
           searchControls={{
-            expanded: advancedSearchExpanded,
+            expanded: searchResultsVisible && advancedSearchExpanded,
             fields: searchFields,
             matchMode: searchMatchMode,
             folderSelection: searchFolderSelection,
@@ -1896,7 +1918,7 @@ export default function App() {
             created: createdFilter,
             modified: modifiedFilter,
             validationMessage: searchValidationMessage,
-            onToggleExpanded: toggleAdvancedSearch,
+            onToggleExpanded: () => setAdvancedSearchExpanded((current) => !current),
             onFieldChange: handleSearchFieldChange,
             onMatchModeChange: handleSearchMatchModeChange,
             onFolderChange: handleSearchFolderChange,

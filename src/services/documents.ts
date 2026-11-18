@@ -28,6 +28,10 @@ export async function getOrCreateSpecialDocument(role: SpecialDocumentRole): Pro
   return window.textotheque.getOrCreateSpecialDocument(role);
 }
 
+export async function getDocument(id: number): Promise<TextDocument | null> {
+  return window.textotheque.getDocument(id);
+}
+
 export async function selectDocument(id: number): Promise<TextDocument | null> {
   return window.textotheque.markOpened(id);
 }
