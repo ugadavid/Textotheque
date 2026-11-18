@@ -866,7 +866,7 @@ Chaque mission confiée à Codex doit produire un rapport Markdown dans le dossi
 reports/
 ```
 
-Convention de nommage recommandée :
+Les nouveaux rapports suivent la convention `reports/NNN_description_report.md`, directement à la racine de `reports/`. Exemples de noms :
 
 ```text
 001_initial_electron_setup_report.md

@@ -1219,51 +1219,43 @@ Autres invariants :
 
 ## 32. Git : règle de travail
 
-Avant chaque mission :
+ChatGPT publie le brief canonique de chaque nouvelle mission dans `missions/` sur GitHub. David décide du périmètre et valide le résultat après livraison.
+
+Avant chaque mission, vérifier la branche, le dépôt distant et le travail local :
 
 ```powershell
 git status --short
 git diff --stat
 ```
 
-Après la mission :
+Synchroniser `main` avec `origin/main` par avance rapide (`git pull --ff-only origin main`), en préservant les modifications locales. Lire intégralement le brief synchronisé et les instructions du dépôt avant d’intervenir. En cas de divergence ou de conflit avec un travail en cours, le signaler au mainteneur avant toute résolution qui pourrait écraser ce travail.
+
+Avant publication, examiner le diff puis indexer explicitement les seuls fichiers autorisés, rapport compris. Contrôler aussi le diff indexé :
 
 ```powershell
 git status --short
 git diff --stat
 git diff --name-only
 git diff --check
+git diff --cached
+git diff --cached --check
 ```
 
-Ne jamais :
+Codex crée un commit de mission et le publie sur `origin/main`, y compris avec un verdict PARTIEL, NO-GO ou BLOQUÉ. Le rapport décrit le travail réalisé, les limites et les contrôles effectivement passés. Si la publication échoue, signaler le blocage et le dernier SHA vérifié.
 
-- `git reset --hard` ;
-- nettoyer le dépôt ;
-- supprimer des fichiers inconnus ;
-- réécrire l’historique ;
-- committer automatiquement ;
-
-sans demande explicite.
-
-Le mainteneur décide du commit.
-
-Une mission doit préserver tout travail déjà présent dans le worktree.
+Préserver le travail concurrent. Les pushs forcés, réécritures d’historique, nettoyages intempestifs, suppressions de fichiers inconnus et actions hors périmètre sont interdits. Soumettre toute décision destructive ou structurante au mainteneur. Exclure de Git les secrets et les données utilisateur, y compris la copie SQLite personnelle utilisée pour le développement sur CODEX_VM. Zenith Ice est la production.
 
 ---
 
 ## 33. Rapports de mission
 
-Chaque mission doit produire un rapport Markdown dans :
+Chaque mission produit un fichier Markdown directement dans `reports/`, sans sous-dossier par mission. Le chemin requis est :
 
 ```text
-reports/
+reports/NNN_description_report.md
 ```
 
-Convention :
-
-```text
-NNN_description_report.md
-```
+Le rapport 041 de recette sur CODEX_VM constitue une exception historique de nommage. Les rapports antérieurs conservent leurs noms.
 
 Le rapport doit contenir au minimum :
 
@@ -1330,8 +1322,10 @@ Avant de déclarer une mission terminée :
 6. vérifier qu’aucun fichier hors périmètre n’a été modifié accidentellement ;
 7. vérifier qu’aucune donnée utilisateur réelle n’a été utilisée par les tests ;
 8. créer le rapport ;
-9. ne pas committer automatiquement ;
-10. ne pas modifier la version si cela n’était pas nécessaire.
+9. vérifier que la version applicative correspond au périmètre de la mission ;
+10. publier le rapport et les modifications autorisées selon la section 32 ;
+11. comparer `git rev-parse HEAD` au SHA annoncé par `git ls-remote origin refs/heads/main`, puis vérifier `git status --short --branch` et signaler tout écart ;
+12. communiquer le verdict, les liens GitHub du rapport et du commit, puis s’arrêter pour validation humaine. La mission suivante exige un nouveau lancement.
 
 ---
 
