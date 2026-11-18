@@ -22,6 +22,21 @@ async function exerciseNavigation() {
   const editor = () => find('.content-editor');
   const rows = () => [...document.querySelectorAll('.catalog-row')];
   const row = (name) => rows().find((item) => item.querySelector('.catalog-cell-text').textContent === name);
+  function toolbarGeometry() {
+    const header = find('.editor-toolbar');
+    const bounds = header.getBoundingClientRect();
+    const metadata = header.querySelector('.toggle-metadata-button').getBoundingClientRect();
+    const centerY = metadata.top + metadata.height / 2;
+    return {
+      rightInset: header.parentElement.getBoundingClientRect().right - metadata.right,
+      rightGap: bounds.right - metadata.right,
+      topInset: metadata.top - bounds.top,
+      singleRow: [...header.children].every((control) => {
+        const rect = control.getBoundingClientRect();
+        return rect.top <= centerY && centerY <= rect.bottom;
+      }),
+    };
+  }
   await waitFor(() => find('.advanced-search-button') && find('.library-name')?.textContent.includes('fixture.sqlite'), 'Initialisation DEV');
   advanced();
   await waitFor(panel, 'Critères visibles à l’entrée');
@@ -36,9 +51,14 @@ async function exerciseNavigation() {
   advanced();
   (await waitFor(() => row('Alpha'), 'Document Alpha dans les résultats')).click();
   await waitFor(() => title() === 'Alpha' && editor().value === 'Alpha', 'Ouverture de Alpha');
+  const editing = toolbarGeometry();
   advanced();
   (await waitFor(() => find('.favorite-only-filter input'), 'Filtre favori')).click();
   await waitFor(() => rows().length === 1 && row('Beta'), 'Beta seul résultat');
+  const searching = toolbarGeometry();
+  if (Math.abs(searching.rightGap) > 1 || Math.abs(searching.rightInset - editing.rightInset) > 1 ||
+      Math.abs(searching.topInset - editing.topInset) > 1) throw Error('Ancrage Métadonnées différent en recherche');
+  if (!editing.singleRow || !searching.singleRow) throw Error('Une seule ligne attendue pour les deux barres à cette largeur');
   if (find('#catalog-title').textContent !== 'Recherche' || find('.catalog-heading .eyebrow')) throw Error('En-tête redondant');
   const button = find('.advanced-search-button').getBoundingClientRect();
   const chevron = toggle().getBoundingClientRect();
@@ -102,6 +122,7 @@ async function runElectron() {
   const { app } = require('electron');
   app.setPath('appData', path.dirname(process.env.TEXTOTHEQUE_DB_PATH));
   app.once('browser-window-created', (_event, win) => {
+    win.setSize(1600, 800);
     win.webContents.once('did-finish-load', async () => {
       try {
         await win.webContents.executeJavaScript('(' + exerciseNavigation.toString() + ')()');

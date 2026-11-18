@@ -70,8 +70,7 @@ textarea {
   border-left: 1px solid #d7d0c4;
 }
 
-.pane-header,
-.editor-toolbar {
+.pane-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -576,6 +575,7 @@ h2 {
 }
 
 .editor-pane {
+  container-type: inline-size;
   display: flex;
   grid-column: 3;
   min-width: 0;
@@ -595,29 +595,16 @@ h2 {
 }
 
 .catalog-header {
-  display: grid;
-  grid-template-columns: auto auto minmax(150px, 1fr) minmax(190px, 1.2fr) auto auto auto;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 12px;
   margin-bottom: 16px;
+}
+
+.search-header {
+  margin-bottom: 8px;
 }
 
 .catalog-heading {
   min-width: 0;
-}
-
-.catalog-header.search-header {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-start;
-  gap: 8px 10px;
-  margin-bottom: 8px;
-}
-
-.search-header .toolbar-search {
-  flex: 1 1 12rem;
-  max-width: 18rem;
+  overflow-wrap: anywhere;
 }
 
 .advanced-search-actions {
@@ -1097,8 +1084,29 @@ h2 {
 
 .editor-toolbar {
   display: grid;
-  grid-template-columns: auto auto minmax(130px, 1fr) minmax(190px, 1.45fr) auto auto auto;
+  grid-template-areas: "navigation todo heading query advanced context metadata";
+  grid-template-columns: auto auto minmax(0, 1fr) minmax(0, 1.45fr) auto auto auto;
+  grid-template-rows: minmax(2.6rem, auto);
   flex: 0 0 auto;
+  align-items: center;
+  gap: 8px 10px;
+}
+
+.toggle-navigation-button { grid-area: navigation; }
+.todo-toolbar-button { grid-area: todo; }
+.title-row, .catalog-heading { grid-area: heading; }
+.toolbar-search { grid-area: query; }
+.editor-toolbar > .advanced-search-button, .advanced-search-actions {
+  grid-area: advanced;
+  justify-self: end;
+}
+.save-controls, .catalog-count {
+  grid-area: context;
+  justify-self: end;
+}
+.toggle-metadata-button {
+  grid-area: metadata;
+  justify-self: end;
 }
 
 .todo-toolbar-button {
@@ -1511,46 +1519,34 @@ textarea:disabled {
     flex-wrap: wrap;
   }
 
-  .catalog-header {
-    grid-template-columns: auto auto minmax(0, 1fr) auto auto auto;
-  }
+}
 
-  .catalog-header .toolbar-search {
-    grid-column: 1 / -1;
-    grid-row: 2;
-  }
-
+@container (max-width: 48rem) {
   .editor-toolbar {
-    grid-template-columns: auto auto minmax(0, 1fr) auto auto auto;
+    grid-template-areas:
+      "navigation todo     heading query   metadata"
+      "advanced   advanced context context context";
+    grid-template-columns: auto auto minmax(0, 1fr) minmax(0, 1.45fr) auto;
   }
 
-  .toolbar-search {
-    grid-column: 1 / -1;
-    grid-row: 2;
+  .editor-toolbar > .advanced-search-button, .advanced-search-actions,
+  .todo-toolbar-button {
+    justify-self: start;
   }
 
   .save-controls {
-    grid-column: 5;
-    grid-row: 1;
+    max-width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
+}
 
-  .editor-toolbar .advanced-search-button {
-    grid-column: 4;
-    grid-row: 1;
-  }
-
-  .toggle-navigation-button {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
-  .title-row {
-    grid-column: 3;
-    grid-row: 1;
-  }
-
-  .toggle-metadata-button {
-    grid-column: 6;
-    grid-row: 1;
+@container (max-width: 26rem) {
+  .editor-toolbar {
+    grid-template-areas:
+      "navigation todo  heading heading  metadata"
+      "query      query query   advanced advanced"
+      "context    context context context context";
+    grid-template-columns: auto auto minmax(0, 1fr) max-content 32px;
   }
 }
