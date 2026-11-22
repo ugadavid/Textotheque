@@ -12,6 +12,7 @@ import { loadEditorPositions } from './services/editor-positions';
 import DocumentCatalog from './components/DocumentCatalog';
 import MetadataPane from './components/MetadataPane';
 import NavigationPane from './components/NavigationPane';
+import { useExplorerOrder } from './services/explorer-order';
 import StatusBar from './components/StatusBar';
 import {
   createFolder,
@@ -217,6 +218,7 @@ function sameDocumentInput(first: DocumentInput, second: DocumentInput): boolean
 }
 
 export default function App() {
+  const explorerOrder = useExplorerOrder();
   const [documents, setDocuments] = useState<TextDocument[]>([]);
   const [catalogDocuments, setCatalogDocuments] = useState<CatalogDocument[]>([]);
   const [catalogOptions, setCatalogOptions] = useState<DocumentCatalogOptions>({
@@ -1869,6 +1871,7 @@ export default function App() {
         }
       >
         {paneLayout.leftVisible ? <NavigationPane
+          explorerOrder={explorerOrder}
           key={libraryInfo?.path ?? 'loading-library'}
           allDocuments={documents}
           deletedDocuments={deletedDocuments}

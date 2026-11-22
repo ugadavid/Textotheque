@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Folder, TextDocument } from '../types/document';
+import type { ExplorerOrder } from '../services/explorer-order';
 
 const EXPANDED_FOLDERS_KEY = 'textotheque:expanded-folders:v2';
+const collator = new Intl.Collator('fr', { sensitivity: 'base', numeric: true });
 type DocumentView = 'navigation' | 'all' | 'unfiled' | 'folder' | 'trash';
 
 interface NavigationPaneProps {
+  explorerOrder: ExplorerOrder;
   allDocuments: TextDocument[];
   deletedDocuments: TextDocument[];
   folders: Folder[];
@@ -37,15 +40,16 @@ function loadExpandedFolderIds(): Set<number> {
 function buildFolderRows(
   folders: Folder[],
   expandedIds: Set<number>,
+  order: ExplorerOrder,
   parentId: number | null = null,
   depth = 0
 ): Array<Folder & { depth: number }> {
-  return folders
-    .filter((folder) => folder.parent_id === parentId)
-    .flatMap((folder) => [
-      { ...folder, depth },
-      ...(expandedIds.has(folder.id) ? buildFolderRows(folders, expandedIds, folder.id, depth + 1) : []),
-    ]);
+  const siblings = folders.filter((folder) => folder.parent_id === parentId);
+  if (order === 'alphabetical') siblings.sort((a, b) => collator.compare(a.name, b.name));
+  return siblings.flatMap((folder) => [
+    { ...folder, depth },
+    ...(expandedIds.has(folder.id) ? buildFolderRows(folders, expandedIds, order, folder.id, depth + 1) : []),
+  ]);
 }
 
 function folderAncestorIds(folders: Folder[], folderId: number): number[] {
@@ -79,7 +83,7 @@ function displayTitle(document: TextDocument): string {
 
 export default function NavigationPane(props: NavigationPaneProps) {
   const {
-    allDocuments, deletedDocuments, folders, currentView, selectedFolderId,
+    allDocuments, deletedDocuments, folders, currentView, selectedFolderId, explorerOrder,
     activeCount, unfiledCount, folderDocumentCounts, trashCount,
     selectedDocumentId, dirtyDocumentId, onViewChange, onCreateDocument, onCreateFolder,
     onRenameFolder, onSelectDocument, onEmptyTrash,
@@ -89,12 +93,24 @@ export default function NavigationPane(props: NavigationPaneProps) {
   const [expandedFolderIds, setExpandedFolderIds] = useState<Set<number>>(loadExpandedFolderIds);
   const [isUnfiledExpanded, setIsUnfiledExpanded] = useState(false);
   const isNavigationMode = ['navigation', 'folder', 'unfiled'].includes(currentView);
-  const folderRows = useMemo(() => buildFolderRows(folders, expandedFolderIds), [folders, expandedFolderIds]);
+  const folderRows = useMemo(() => buildFolderRows(folders, expandedFolderIds, explorerOrder), [folders, expandedFolderIds, explorerOrder]);
   const treeDocuments = useMemo(
     () => allDocuments.filter((document) => document.special_role !== 'todo'),
     [allDocuments]
   );
-  const unfiledDocuments = treeDocuments.filter((document) => document.folder_id === null);
+  const documentsByFolder = useMemo(() => {
+    const groups = new Map<number | null, TextDocument[]>();
+    for (const document of treeDocuments) {
+      const group = groups.get(document.folder_id);
+      if (group) group.push(document);
+      else groups.set(document.folder_id, [document]);
+    }
+    if (explorerOrder === 'alphabetical') {
+      for (const group of groups.values()) group.sort((a, b) => collator.compare(displayTitle(a), displayTitle(b)));
+    }
+    return groups;
+  }, [treeDocuments, explorerOrder]);
+  const unfiledDocuments = documentsByFolder.get(null) ?? [];
 
   useEffect(() => {
     window.localStorage.setItem(EXPANDED_FOLDERS_KEY, JSON.stringify([...expandedFolderIds]));
@@ -190,7 +206,7 @@ export default function NavigationPane(props: NavigationPaneProps) {
             {folderRows.map((folder) => {
               const isSelected = currentView === 'folder' && selectedFolderId === folder.id;
               const isExpanded = expandedFolderIds.has(folder.id);
-              const folderDocuments = isExpanded ? treeDocuments.filter((document) => document.folder_id === folder.id) : [];
+              const folderDocuments = isExpanded ? documentsByFolder.get(folder.id) ?? [] : [];
               const startRename = () => { setEditingFolderId(folder.id); setEditingFolderName(folder.name); };
               const commitRename = (name = editingFolderName) => { onRenameFolder(folder.id, name); setEditingFolderId(null); setEditingFolderName(''); };
               return <div className="folder-row" key={folder.id}>

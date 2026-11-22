@@ -1,8 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
-const { createTestTempDirectory, removeTestTempDirectory } = require('./test-temp-directory.cjs');
+const { runPreferenceSessions } = require('./preference-test-sessions.cjs');
 
 async function wait(read, label) {
   for (let i = 0; i < 200; i++) {
@@ -178,29 +177,6 @@ async function runWindow(temp, phase) {
   await import('../dist-electron/main.js');
 }
 
-async function runTest() {
-  const { preview } = await import('vite');
-  const server = await preview({preview: {port: 5173, strictPort: true}});
-  const temp = createTestTempDirectory('theme');
-  try {
-    for (const phase of ['first', 'restart', 'invalid']) {
-      const args = [__filename, '--fixture', phase, '--user-data-dir=' + temp];
-      if (process.argv.includes('--captures')) args.push('--captures');
-      const child = spawn(require('electron'), args, {stdio: 'inherit', timeout: 45000,
-        env: {...process.env, TEXTOTHEQUE_DB_PATH: path.join(temp, 'fixture.sqlite'),
-          TEXTOTHEQUE_LIBRARY_HISTORY_PATH: path.join(temp, 'history.json')}});
-      const code = await new Promise((resolve, reject) => {
-        child.once('error', reject);
-        child.once('close', resolve);
-      });
-      assert.equal(code, 0, phase);
-    }
-  } finally {
-    await server.close();
-    removeTestTempDirectory(temp);
-  }
-}
-
 const fixture = process.argv.indexOf('--fixture');
-(fixture >= 0 ? runWindow(path.dirname(process.env.TEXTOTHEQUE_DB_PATH), process.argv[fixture + 1]) : runTest())
+(fixture >= 0 ? runWindow(path.dirname(process.env.TEXTOTHEQUE_DB_PATH), process.argv[fixture + 1]) : runPreferenceSessions(__filename, 'theme'))
   .catch((error) => { console.error(error); process.exitCode = 1; });

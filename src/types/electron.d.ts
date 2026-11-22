@@ -1,4 +1,5 @@
 import type { DocumentInput, Folder, SpecialDocumentRole, TextDocument } from './document';
+import type { ExplorerOrder } from '../services/explorer-order';
 import type { CatalogDocument, DocumentCatalogOptions } from './catalog';
 import type { SearchDocument, SearchDocumentsOptions } from './search';
 import type { SavedSearchDefinition, SavedSearchInput, SavedSearchSummary, SearchMenuAction, SearchMenuState } from './saved-search';
@@ -8,6 +9,8 @@ import type { FileMenuAction, TextExportDraft, TextExportResult } from './text-e
 declare global {
   interface Window {
     textotheque: {
+      setExplorerOrder: (order: ExplorerOrder) => Promise<void>;
+      onExplorerOrderChoice: (callback: (order: ExplorerOrder) => void) => () => void;
       setTheme: (theme: 'light' | 'dark') => Promise<void>;
       onThemeChoice: (callback: (theme: 'light' | 'dark') => void) => () => void;
       getLibraryInfo: () => Promise<LibraryInfo>;

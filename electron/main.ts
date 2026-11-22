@@ -58,6 +58,7 @@ let libraryManager: ActiveLibraryManager | null = null;
 let libraryHistory: LibraryHistoryRegistry | null = null;
 let closeApproved = false;
 let documentExportAvailable = false;
+let explorerOrder: 'manual' | 'alphabetical' = 'manual';
 let searchMenuState: SearchMenuState = { activeSavedSearchId: null, modified: false, canSave: true };
 
 function getDatabasePath(): string {
@@ -99,6 +100,12 @@ function registerIpcHandler<Args extends unknown[], Result>(
 }
 
 function registerIpcHandlers(): void {
+  registerIpcHandler('view:set-explorer-order', (_event, order: typeof explorerOrder) => {
+    if (order !== 'manual' && order !== 'alphabetical') throw new Error('Ordre de l’explorateur inconnu.');
+    explorerOrder = order;
+    const item = Menu.getApplicationMenu()?.getMenuItemById(`explorer-order-${order}`);
+    if (item) item.checked = true;
+  });
   registerIpcHandler('view:set-theme', (_event, theme: 'light' | 'dark') => {
     if (theme !== 'light' && theme !== 'dark') throw new Error('Thème inconnu.');
     nativeTheme.themeSource = theme;
@@ -345,6 +352,15 @@ function refreshApplicationMenu(): void {
           type: 'radio',
           checked: nativeTheme.themeSource === theme || (theme === 'light' && nativeTheme.themeSource === 'system'),
           click: () => mainWindow?.webContents.send('view:choose-theme', theme),
+        })),
+      }, {
+        label: 'Ordre de l’explorateur',
+        submenu: (['manual', 'alphabetical'] as const).map((order) => ({
+          id: `explorer-order-${order}`,
+          label: order === 'manual' ? 'Manuel' : 'Alphabétique',
+          type: 'radio',
+          checked: explorerOrder === order,
+          click: () => mainWindow?.webContents.send('view:choose-explorer-order', order),
         })),
       }],
     },

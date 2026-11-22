@@ -20,6 +20,12 @@ import type { SearchMenuAction, SearchMenuState } from './search-menu.js';
 const { contextBridge, ipcRenderer } = require('electron') as typeof import('electron');
 
 const api = {
+  setExplorerOrder: (order: 'manual' | 'alphabetical'): Promise<void> => ipcRenderer.invoke('view:set-explorer-order', order),
+  onExplorerOrderChoice: (callback: (order: 'manual' | 'alphabetical') => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, order: 'manual' | 'alphabetical') => callback(order);
+    ipcRenderer.on('view:choose-explorer-order', listener);
+    return () => ipcRenderer.removeListener('view:choose-explorer-order', listener);
+  },
   setTheme: (theme: 'light' | 'dark'): Promise<void> => ipcRenderer.invoke('view:set-theme', theme),
   onThemeChoice: (callback: (theme: 'light' | 'dark') => void): (() => void) => {
     const listener = (_event: Electron.IpcRendererEvent, theme: 'light' | 'dark') => callback(theme);
