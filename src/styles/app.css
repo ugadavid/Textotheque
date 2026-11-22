@@ -1653,3 +1653,52 @@ textarea:disabled {
     grid-template-columns: auto auto minmax(0, 1fr) max-content 32px;
   }
 }
+
+.character-palette {
+  position: fixed;
+  z-index: 9;
+  top: 3.5rem;
+  right: 1rem;
+  width: min(21rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 5rem);
+  overflow: auto;
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.85rem;
+  color: var(--text);
+  background: var(--pane);
+  border: 1px solid var(--border-control);
+  border-radius: 0.65rem;
+  box-shadow: 0 5px 20px var(--popover-shadow);
+}
+.character-palette header, .character-controls, .character-palette form {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+.character-palette header { justify-content: space-between; }
+.character-palette select, .character-palette input {
+  min-width: 0;
+  flex: 1;
+  color: var(--text);
+  background: var(--field);
+}
+.character-palette button, .character-palette select, .character-palette input {
+  padding: 0.35rem;
+  border: 1px solid var(--border-control);
+  border-radius: 0.3rem;
+}
+.character-palette button { color: var(--text); background: var(--surface); }
+.character-palette button:hover:enabled, .character-palette button[aria-pressed="true"] {
+  color: var(--selected-text);
+  background: var(--selected);
+  border-color: var(--accent);
+}
+.character-palette :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.character-palette button:disabled { opacity: 0.55; }
+.character-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(2.6rem, 1fr)); gap: 0.25rem; }
+.character-grid > div { position: relative; }
+.character-tile { width: 100%; min-height: 2.5rem; font-size: 1.25rem; }
+.character-palette .character-remove { position: absolute; top: -2px; right: -2px; padding: 0 3px; }
+.character-palette form { flex-wrap: wrap; }
+.character-palette form small { flex-basis: 100%; }

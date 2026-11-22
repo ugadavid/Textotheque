@@ -36,6 +36,7 @@ declare global {
       deleteSavedSearch: (id: number, expectedLibraryPath: string) => Promise<void>;
       setSearchMenuState: (state: SearchMenuState) => Promise<void>;
       onSearchMenuAction: (callback: (action: SearchMenuAction) => void) => () => void;
+      onToggleCharacters: (callback: () => void) => () => void;
       listDeletedDocuments: () => Promise<TextDocument[]>;
       listFolders: () => Promise<Folder[]>;
       createFolder: (parentId: number | null) => Promise<Folder>;

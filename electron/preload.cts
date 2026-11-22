@@ -75,6 +75,11 @@ const api = {
     ipcRenderer.on('search:menu-action', listener);
     return () => ipcRenderer.removeListener('search:menu-action', listener);
   },
+  onToggleCharacters: (callback: () => void): (() => void) => {
+    const listener = () => callback();
+    ipcRenderer.on('tools:toggle-characters', listener);
+    return () => ipcRenderer.removeListener('tools:toggle-characters', listener);
+  },
   listDeletedDocuments: (): Promise<TextDocument[]> => ipcRenderer.invoke('documents:list-deleted'),
   listFolders: (): Promise<Folder[]> => ipcRenderer.invoke('folders:list'),
   createFolder: (parentId: number | null): Promise<Folder> => ipcRenderer.invoke('folders:create', parentId),

@@ -8,6 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import EditorPane from './components/EditorPane';
+import CharacterPalette from './components/CharacterPalette';
 import { loadEditorPositions } from './services/editor-positions';
 import DocumentCatalog from './components/DocumentCatalog';
 import MetadataPane from './components/MetadataPane';
@@ -243,6 +244,9 @@ export default function App() {
   const [libraryInfo, setLibraryInfo] = useState<LibraryInfo | null>(null);
   const editorPositions = useMemo(() => loadEditorPositions(libraryInfo?.path), [libraryInfo?.path]);
   const capturePositionRef = useRef<(() => void) | null>(null);
+  const insertTextRef = useRef<((text: string) => boolean) | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  useEffect(() => window.textotheque.onToggleCharacters(() => setPaletteOpen(open => !open)), []);
   const [libraryBackupState, setLibraryBackupState] = useState<LibraryBackupState>('idle');
   const [libraryOpenState, setLibraryOpenState] = useState<LibraryOpenState>('idle');
   const [libraryNotice, setLibraryNotice] = useState<string | null>(null);
@@ -1796,6 +1800,11 @@ export default function App() {
           return;
         }
 
+        if (paletteOpen) {
+          event.preventDefault();
+          setPaletteOpen(false);
+          return;
+        }
         if (hasActiveSearchCriteria || searchResultsVisible) {
           event.preventDefault();
           clearSearchAndReturnToNavigation();
@@ -1952,6 +1961,7 @@ export default function App() {
           positions={editorPositions}
           libraryPath={libraryInfo?.path}
           capturePositionRef={capturePositionRef}
+          insertTextRef={insertTextRef}
           document={selectedDocument}
           title={title}
           content={content}
@@ -2017,6 +2027,11 @@ export default function App() {
           }}
         /> : null}
       </main>
+      {paletteOpen && <CharacterPalette
+        editable={Boolean(selectedDocument && !selectedDocumentIsDeleted && !searchResultsVisible && !catalogVisible)}
+        onInsert={text => insertTextRef.current?.(text) ?? false}
+        onClose={() => setPaletteOpen(false)}
+      />}
       <StatusBar
         totalDocuments={currentDocuments.length}
         visibleDocuments={searchResultsVisible ? searchResults.length : currentDocuments.length}

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject } from 'react';
+import { useImperativeHandle, useLayoutEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject } from 'react';
 import type { TextDocument } from '../types/document';
 import { persistEditorPositions, type EditorPosition } from '../services/editor-positions';
 
@@ -6,6 +6,7 @@ interface EditorPaneProps {
   positions: Map<number, EditorPosition>;
   libraryPath?: string;
   capturePositionRef: MutableRefObject<(() => void) | null>;
+  insertTextRef: MutableRefObject<((text: string) => boolean) | null>;
   document: TextDocument | null;
   title: string;
   content: string;
@@ -40,11 +41,11 @@ const saveLabels = {
   error: 'Erreur',
 };
 
-interface ContentEditorProps extends Pick<EditorPaneProps, 'positions' | 'libraryPath' | 'capturePositionRef' | 'content' | 'isDeleted' | 'onContentChange'> {
+interface ContentEditorProps extends Pick<EditorPaneProps, 'positions' | 'libraryPath' | 'capturePositionRef' | 'insertTextRef' | 'content' | 'isDeleted' | 'onContentChange'> {
   documentId: number;
 }
 
-function ContentEditor({ documentId, positions, libraryPath, capturePositionRef, content, isDeleted, onContentChange }: ContentEditorProps) {
+function ContentEditor({ documentId, positions, libraryPath, capturePositionRef, insertTextRef, content, isDeleted, onContentChange }: ContentEditorProps) {
   const contentEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const pendingCaretPositionRef = useRef<number | null>(null);
   const initialPosition = useRef<EditorPosition>();
@@ -87,6 +88,23 @@ function ContentEditor({ documentId, positions, libraryPath, capturePositionRef,
     }
   }, [content, positions]);
 
+  function insertText(text: string): boolean {
+    const editor = contentEditorRef.current;
+    if (!editor || isDeleted) return false;
+    const start = editor.selectionStart;
+    const caret = start + text.length;
+    const next = content.slice(0, start) + text + content.slice(editor.selectionEnd);
+    if (next !== content) {
+      pendingCaretPositionRef.current = caret;
+      onContentChange(next);
+    } else {
+      editor.focus();
+      editor.setSelectionRange(caret, caret);
+    }
+    return true;
+  }
+  useImperativeHandle(insertTextRef, () => insertText);
+
   function handleContentKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
     if (isDeleted || event.shiftKey || event.altKey || event.metaKey) return;
     if (event.ctrlKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
@@ -99,13 +117,7 @@ function ContentEditor({ documentId, positions, libraryPath, capturePositionRef,
     if (event.key !== 'Tab' || event.ctrlKey) return;
 
     event.preventDefault();
-    const selectionStart = event.currentTarget.selectionStart;
-    const selectionEnd = event.currentTarget.selectionEnd;
-    const caretPosition = selectionStart + 1;
-    const nextContent = `${content.slice(0, selectionStart)}\t${content.slice(selectionEnd)}`;
-    pendingCaretPositionRef.current = nextContent === content ? null : caretPosition;
-    onContentChange(nextContent);
-    event.currentTarget.setSelectionRange(caretPosition, caretPosition);
+    insertText('\t');
   }
 
   return <textarea
@@ -124,6 +136,7 @@ export default function EditorPane({
   positions,
   libraryPath,
   capturePositionRef,
+  insertTextRef,
   document,
   title,
   content,
@@ -250,6 +263,7 @@ export default function EditorPane({
           positions={positions}
           libraryPath={libraryPath}
           capturePositionRef={capturePositionRef}
+          insertTextRef={insertTextRef}
           content={content}
           isDeleted={isDeleted}
           onContentChange={onContentChange}
