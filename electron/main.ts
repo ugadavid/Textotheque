@@ -44,13 +44,17 @@ const diagnosticMode = identityCheckRequested || ipcErrorCheckRequested || packa
 const runtimeProfile = resolveRuntimeProfile(app.getPath('appData'), app.isPackaged);
 const testUserDataPath = diagnosticMode ? process.env.TEXTOTHEQUE_TEST_USER_DATA_PATH : undefined;
 const activeUserDataPath = testUserDataPath ? path.resolve(testUserDataPath) : runtimeProfile.userDataPath;
+const appUserModelId = 'com.squirrel.Textotheque.Textotheque';
+const windowIcon = app.isPackaged
+  ? path.join(process.resourcesPath, 'textotheque.ico')
+  : path.join(__dirname, '..', 'assets', 'branding', 'textotheque.ico');
 
 if (!electronSquirrelStartup) {
   fs.mkdirSync(activeUserDataPath, { recursive: true });
   app.setName(runtimeProfile.displayName);
   app.setPath('userData', activeUserDataPath);
   app.setPath('sessionData', activeUserDataPath);
-  app.setAppUserModelId('com.squirrel.Textotheque.Textotheque');
+  app.setAppUserModelId(appUserModelId);
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -379,9 +383,7 @@ async function createWindow(show = true): Promise<void> {
     minWidth: 980,
     minHeight: 640,
     title: runtimeProfile.displayName,
-    icon: app.isPackaged
-      ? path.join(process.resourcesPath, 'textotheque.ico')
-      : path.join(__dirname, '..', 'assets', 'branding', 'textotheque.ico'),
+    icon: windowIcon,
     backgroundColor: '#f5f2ec',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -390,6 +392,9 @@ async function createWindow(show = true): Promise<void> {
     },
   });
 
+  if (process.platform === 'win32') {
+    mainWindow.setAppDetails({ appId: appUserModelId, appIconPath: windowIcon });
+  }
   const rendererTarget = resolveRendererTarget(app.isPackaged, __dirname);
   try {
     if (rendererTarget.kind === 'url') await mainWindow.loadURL(rendererTarget.value);
