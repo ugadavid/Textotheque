@@ -78,6 +78,9 @@ async function checkPalette(win, phase) {
     assert.ok(await read("!document.querySelector('.content-editor') && document.querySelector('.character-tile').ariaDisabled === 'true'"));
     await favorite('🐸');
     assert.deepEqual((await prefs()).favorites, ['🐸']);
+    toggle.click();
+    await wait('!' + panel);
+    assert.equal(await read("document.activeElement.matches('.content-editor')"), false);
     return;
   }
   if (phase === 'restart') {
@@ -166,6 +169,9 @@ async function checkPalette(win, phase) {
   await click('.nav-view-button');
   await wait("document.querySelector('.catalog-row')");
   assert.ok(await read("document.querySelector('.character-tile').ariaDisabled === 'true'"));
+  toggle.click(); await wait('!' + panel);
+  assert.equal(await read("document.activeElement.matches('.content-editor')"), false);
+  toggle.click(); await wait(panel);
   await click('.catalog-row');
   const editor = "document.querySelector('.content-editor')";
   await wait(editor + "?.value === 'abcdef'");
@@ -178,6 +184,7 @@ async function checkPalette(win, phase) {
   await wait(item);
   for (const type of ['keyDown','keyUp']) win.webContents.sendInputEvent({type, keyCode:'Escape'});
   await wait('!' + item);
+  assert.ok(await read(panel + '.contains(document.activeElement)'));
   await context('🐸');
   await read("document.querySelector('.character-controls').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))");
   await wait('!' + item);
@@ -231,6 +238,54 @@ async function checkPalette(win, phase) {
   await read(editor + ".focus(); document.execCommand('insertText',false,'Z')");
   assert.deepEqual((await prefs()).recent, expected);
   await wait("!document.querySelector('.title-dirty-marker')");
+  toggle.click();
+  await wait('!' + panel);
+  const text = ('Une ligne fictive. '.repeat(25) + '\n').repeat(100);
+  await read(`${editor}.focus(); ${editor}.select(); document.execCommand('insertText',false,${JSON.stringify(text)})`);
+  await wait(`(async () => (await window.textotheque.getDocument(1)).content === ${JSON.stringify(text)})()`);
+  const snapshot = () => read(`(() => {const e=${editor}; return [
+    e.selectionStart,e.selectionEnd,e.selectionDirection,e.scrollTop,e.scrollLeft,e.value
+  ];})()`);
+  const reader = new (require('better-sqlite3'))(process.env.TEXTOTHEQUE_DB_PATH, {readonly:true});
+  try {
+    const revision = reader.pragma('data_version', {simple:true});
+    for (const [close, start, end, direction] of [
+      ['cross', 19, 19, 'none'], ['shortcut', 37, 37, 'none'],
+      ['menu', 8, 27, 'forward'], ['escape', 12, 20, 'backward'],
+    ]) {
+      // A long unwrapped fixture exercises both scroll axes independently of the selection.
+      await read(`(() => {const e=${editor}; e.style.whiteSpace='pre'; e.focus();
+        e.setSelectionRange(${start},${end},'${direction}'); e.scrollTop=170; e.scrollLeft=70;})()`);
+      const before = await snapshot();
+      assert.ok(before[3] > 0 && before[4] > 0);
+      if (close === 'shortcut') shortcut(); else toggle.click();
+      await wait(panel);
+      if (close === 'cross') {
+        await click('.character-palette > button');
+        await wait("document.activeElement.matches('.character-palette input')");
+        await click('.character-palette header button');
+      } else if (close === 'menu') {
+        await context('🐸');
+        toggle.click();
+      } else if (close === 'shortcut') shortcut();
+      else {
+        await category('Flèches');
+        for (const type of ['keyDown','keyUp']) win.webContents.sendInputEvent({type, keyCode:'Escape'});
+      }
+      await wait('!' + panel);
+      assert.ok(await read('document.activeElement === ' + editor), close);
+      assert.deepEqual(await snapshot(), before, close);
+      assert.ok(!await read("Boolean(document.querySelector('.title-dirty-marker'))"), close);
+    }
+    await new Promise(resolve => setTimeout(resolve, 1750));
+    assert.equal(reader.pragma('data_version', {simple:true}), revision);
+  } finally { reader.close(); }
+  await win.webContents.insertText('X');
+  const replacement = text.slice(0,12) + 'X' + text.slice(20);
+  await wait(`(async () => (await window.textotheque.getDocument(1)).content === ${JSON.stringify(replacement)})()`);
+  toggle.click();
+  await wait(panel);
+  await category('Récents');
   await click('.nav-view-button:nth-child(2)');
   await wait(editor + '?.disabled');
   assert.ok(await read("document.querySelector('.character-tile').ariaDisabled === 'true'"));
@@ -238,6 +293,7 @@ async function checkPalette(win, phase) {
   assert.deepEqual((await prefs()).recent, expected);
   await read("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))");
   await wait('!' + panel);
+  assert.equal(await read('document.activeElement === ' + editor), false);
 }
 
 async function runWindow(phase) {

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -218,6 +219,10 @@ function sameDocumentInput(first: DocumentInput, second: DocumentInput): boolean
     first.folder_id === second.folder_id;
 }
 
+function focusMountedEditor() {
+  document.querySelector<HTMLTextAreaElement>('.content-editor:enabled')?.focus({ preventScroll: true });
+}
+
 export default function App() {
   const explorerOrder = useExplorerOrder();
   const [documents, setDocuments] = useState<TextDocument[]>([]);
@@ -246,6 +251,7 @@ export default function App() {
   const capturePositionRef = useRef<(() => void) | null>(null);
   const insertTextRef = useRef<((text: string) => boolean) | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const paletteWasOpen = useRef(false);
   useEffect(() => window.textotheque.onToggleCharacters(() => setPaletteOpen(open => !open)), []);
   const [libraryBackupState, setLibraryBackupState] = useState<LibraryBackupState>('idle');
   const [libraryOpenState, setLibraryOpenState] = useState<LibraryOpenState>('idle');
@@ -253,6 +259,10 @@ export default function App() {
   const [paneLayout, setPaneLayout] = useState<PaneLayout>(() => loadPaneLayout());
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
   const [savedSearchNameDialog, setSavedSearchNameDialog] = useState<SavedSearchNameDialogState | null>(null);
+  useLayoutEffect(() => {
+    if (paletteWasOpen.current && !paletteOpen && !confirmDialog && !savedSearchNameDialog) focusMountedEditor();
+    paletteWasOpen.current = paletteOpen;
+  }, [paletteOpen, confirmDialog, savedSearchNameDialog]);
   const [savedSearches, setSavedSearches] = useState<SavedSearchSummary[]>([]);
   const [activeSavedSearchId, setActiveSavedSearchId] = useState<number | null>(null);
   const [activeSavedSearchName, setActiveSavedSearchName] = useState<string | null>(null);
@@ -530,9 +540,7 @@ export default function App() {
   ]);
 
   const focusEditor = useCallback(() => {
-    window.requestAnimationFrame(() => {
-      document.querySelector<HTMLTextAreaElement>('.content-editor')?.focus({ preventScroll: true });
-    });
+    window.requestAnimationFrame(focusMountedEditor);
   }, []);
 
   const focusSearch = useCallback(() => {
