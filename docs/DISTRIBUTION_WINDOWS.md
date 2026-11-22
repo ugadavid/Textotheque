@@ -63,7 +63,7 @@ Le comparateur ouvre les copies en lecture seule, vérifie l’identité et l’
 
 ## Identité visuelle Windows
 
-Les sources validées sont `assets/branding/textotheque-icon.png` (référence graphique) et `assets/branding/textotheque.ico` (Windows). Forge applique cet ICO à l’exécutable et à Squirrel Setup. La fenêtre DEV l’ouvre dans le dépôt. En STABLE, elle l’ouvre dans les ressources externes du package. Le PNG reste dans le dépôt. Le raccourci utilise l’exécutable installé. Pour Applications installées, Squirrel dispose également d’une URL immuable vers le même ICO versionné.
+Les sources validées sont `assets/branding/textotheque-icon.png` (référence graphique) et `assets/branding/textotheque.ico` (Windows). Forge applique cet ICO à l’exécutable et à Squirrel Setup. La fenêtre DEV l’ouvre dans le dépôt. En STABLE, elle l’ouvre dans les ressources externes du package. Le PNG reste dans le dépôt. Le raccourci utilise l’exécutable installé. Pour Applications installées, Squirrel dispose également d’une URL immuable vers le même ICO versionné. Tout remplacement de cet ICO exige la mise à jour de cette URL et une fabrication complète du Setup et des exécutables. Sur CODEX_VM, Explorer a conservé une ancienne icône de barre des tâches jusqu’au redémarrage du shell. Voir le [diagnostic 053a](../reports/053a_Icone_transparente_et_diagnostic_barre_des_taches_report.md).
 
 ## Limites actuelles
 
