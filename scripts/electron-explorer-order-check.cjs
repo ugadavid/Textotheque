@@ -59,13 +59,13 @@ async function check(win, phase, first, second) {
     await until(async () => await stored() === value, 'Préférence ' + value);
     await order(value);
   }
-  async function capture(mode) {
+  async function capture(mode, mission = '049') {
     if (!process.argv.includes('--captures')) return;
     const rect = await read(`new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => {
       const r = document.querySelector('.navigation-pane').getBoundingClientRect();
       done({x: 0, y: 0, width: Math.ceil(r.right), height: Math.ceil(r.bottom)});
     })))`);
-    const directory = path.resolve('dist-electron/captures-049');
+    const directory = path.resolve('dist-electron', 'captures-' + mission);
     fs.mkdirSync(directory, {recursive: true});
     fs.writeFileSync(path.join(directory, mode + '.png'), (await win.webContents.capturePage(rect)).toPNG());
   }
@@ -127,6 +127,83 @@ async function check(win, phase, first, second) {
     assert.deepEqual(positions(), original);
     assert.equal(version(), before, 'Une connexion a écrit dans SQLite pendant le changement d’ordre');
   } finally { sqlite.close(); }
+  // Use Chromium mouse/key events in the real window for both rename gestures.
+  const menuItem = '.folder-context-menu [role="menuitem"]';
+  const field = '.folder-name-input';
+  const exists = selector => read('Boolean(document.querySelector(' + JSON.stringify(selector) + '))');
+  async function mouse(element, button = 'left', count = 1) {
+    const point = await read(`(() => {
+      const el = ${element};
+      el.scrollIntoView({block:'nearest'});
+      const r = el.getBoundingClientRect();
+      return {x: Math.floor(r.left + r.width / 2), y: Math.floor(r.top + r.height / 2)};
+    })()`);
+    for (let clickCount = 1; clickCount <= count; clickCount++) {
+      for (const type of ['mouseDown', 'mouseUp']) win.webContents.sendInputEvent({type, button, clickCount, ...point});
+    }
+  }
+  function keyPress(keyCode) {
+    win.webContents.sendInputEvent({type: 'keyDown', keyCode});
+    if (keyCode === 'Return') win.webContents.sendInputEvent({type: 'char', keyCode: '\r'});
+    win.webContents.sendInputEvent({type: 'keyUp', keyCode});
+  }
+  const folderButton = name => `[...document.querySelectorAll('.folder-row .folder-button')].find(
+    e => e.querySelector('.folder-label').textContent === ${JSON.stringify(name)})`;
+  async function openMenu(name) {
+    await mouse(folderButton(name), 'right');
+    await until(() => exists(menuItem), 'Menu contextuel');
+    assert.equal(await read('document.activeElement.textContent'), 'Renommer');
+    assert.equal(await exists(field), false);
+  }
+  const positions = () => read('window.textotheque.listFolders().then(rows => rows.map(f => [f.id, f.parent_id, f.position]))');
+  const beforeRename = await positions();
+  const treeState = () => read(`[document.querySelector('.tree-document-button.selected')?.textContent,
+    ...[...document.querySelectorAll('.folder-row .folder-toggle-button')].map(e => e.title)]`);
+  const originalTree = await treeState();
+  assert.equal(await exists('.folder-rename-button'), false);
+  assert.equal(await read(`[...document.querySelectorAll('.folder-row .folder-button')].every(e =>
+    Math.abs(e.getBoundingClientRect().right - e.parentElement.getBoundingClientRect().right) < 1)`), true);
+  await openMenu('Églantine');
+  await capture('manuel-clair', '050');
+  keyPress('Escape');
+  await until(async () => !await exists(menuItem), 'Fermeture par Échap');
+  await openMenu('Églantine');
+  await mouse("document.querySelector('.folder-section-header > span')");
+  await until(async () => !await exists(menuItem), 'Fermeture par clic ailleurs');
+  assert.deepEqual(await treeState(), originalTree);
+  assert.equal(await exists('.title-dirty-marker'), false);
+  const draft = 'Brouillon fictif conservé pendant le renommage.';
+  await read(`(() => {
+    const e = document.querySelector('.content-editor');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(e, ${JSON.stringify(draft)});
+    e.dispatchEvent(new Event('input', {bubbles:true}));
+  })()`);
+  await until(() => exists('.title-dirty-marker'), 'Brouillon modifié');
+  await openMenu('Églantine');
+  await mouse("document.querySelector('.folder-context-menu button')");
+  await until(() => exists(field), 'Éditeur inline par menu');
+  await input(field, 'Branche');
+  keyPress('Return');
+  await until(async () => (await names()).includes('Branche'), 'Renommage manuel validé par Entrée');
+  assert.deepEqual(await names(), manual.map(n => n === 'Églantine' ? 'Branche' : n));
+  assert.equal(await read("document.querySelector('.content-editor').value"), draft);
+  await click('[title="Sauvegarder - Ctrl+S"]');
+  await until(async () => !await exists('.title-dirty-marker'), 'Sauvegarde du brouillon');
+  assert.equal(await read("window.textotheque.listDocuments().then(rows => rows.find(d => d.title === 'Carnet 10' && d.folder_id !== null).content)"), draft);
+
+  await mouse(folderButton('Branche'), 'left', 2);
+  await until(() => exists(field), 'Double clic');
+  await input(field, 'Annulé');
+  keyPress('Escape');
+  await until(async () => !await exists(field), 'Annulation inline');
+  assert.ok((await names()).includes('Branche'));
+  await mouse(folderButton('Branche'), 'left', 2);
+  await until(() => exists(field), 'Double clic après annulation');
+  await input(field, 'Églantine');
+  await mouse("document.querySelector('.folder-section-header > span')");
+  await until(async () => (await names()).includes('Églantine'), 'Validation par perte de focus');
+  await click(rootDocs + ' .tree-document-button');
+  await until(() => read("document.querySelector('.title-input')?.value === 'Carnet 10'"), 'Retour au texte');
   item('theme-dark').click();
   await until(() => read("document.documentElement.dataset.theme === 'dark'"), 'Thème sombre');
   await choose('alphabetical');
@@ -142,11 +219,14 @@ async function check(win, phase, first, second) {
   await input('.title-input', 'Zinnia');
   await click('[title="Sauvegarder - Ctrl+S"]');
   await until(async () => (await docs(rootDocs)).at(-1) === 'Zinnia', 'Titre renommé');
-  await read(`[...document.querySelectorAll('.folder-button')].find(e => e.querySelector('.folder-label').textContent === 'Zéphyr')
-    .dispatchEvent(new MouseEvent('dblclick', {bubbles:true}))`);
+  await openMenu('Zéphyr');
+  await capture('alphabetique-sombre', '050');
+  keyPress('Return');
+  await until(() => exists(field), 'Commande clavier en sombre');
   await input('.folder-name-input', 'Brume');
   await read("document.querySelector('.folder-name-input').blur()");
   await until(async () => (await names()).join() === 'abricot,Brume,Lot 2,Lot 10,Églantine', 'Dossier renommé');
+  assert.deepEqual(await positions(), beforeRename);
 }
 
 async function fixture(phase) {

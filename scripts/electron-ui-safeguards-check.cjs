@@ -813,7 +813,7 @@ app
         document.querySelector('.folder-actions button[title="Nouveau dossier racine"]').click();
         await waitFor(() => document.querySelector('.folder-button')?.textContent.includes('Nouveau dossier'), 'folder created');
         await waitFor(() => document.querySelector('.status-bar')?.textContent.includes('Dossier: Nouveau dossier'), 'folder status context');
-        document.querySelector('.folder-rename-button').click();
+        document.querySelector('.folder-row .folder-button.selected').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
         await waitFor(() => document.querySelector('.folder-name-input'), 'folder rename input visible');
         document.querySelector('.folder-name-input').focus();
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
@@ -1548,11 +1548,7 @@ app
         const persistedBefore = (await window.textotheque.listFolders())[0];
         const firstRow = document.querySelector('.folder-row');
         firstRow.querySelector('.folder-button').click();
-        const renameButton = await waitFor(
-          () => firstRow.querySelector('.folder-rename-button'),
-          'folder rename button'
-        );
-        renameButton.click();
+        firstRow.querySelector('.folder-button').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
         const input = await waitFor(() => firstRow.querySelector('.folder-name-input'), 'folder rename input');
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Nom refuse');
         input.dispatchEvent(new Event('input', { bubbles: true }));

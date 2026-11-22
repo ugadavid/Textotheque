@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type MouseEvent } from 'react';
 import type { Folder, TextDocument } from '../types/document';
 import type { ExplorerOrder } from '../services/explorer-order';
 
@@ -90,6 +90,9 @@ export default function NavigationPane(props: NavigationPaneProps) {
   } = props;
   const [editingFolderId, setEditingFolderId] = useState<number | null>(null);
   const [editingFolderName, setEditingFolderName] = useState('');
+  const [folderMenu, setFolderMenu] = useState<{
+    folderId: number; x: number; y: number; trigger: HTMLButtonElement;
+  } | null>(null);
   const [expandedFolderIds, setExpandedFolderIds] = useState<Set<number>>(loadExpandedFolderIds);
   const [isUnfiledExpanded, setIsUnfiledExpanded] = useState(false);
   const isNavigationMode = ['navigation', 'folder', 'unfiled'].includes(currentView);
@@ -111,6 +114,20 @@ export default function NavigationPane(props: NavigationPaneProps) {
     return groups;
   }, [treeDocuments, explorerOrder]);
   const unfiledDocuments = documentsByFolder.get(null) ?? [];
+
+  useEffect(() => {
+    if (!folderMenu) return;
+    const close = () => setFolderMenu(null);
+    function handlePointerDown(event: PointerEvent) {
+      if (!(event.target instanceof Element && event.target.closest('.folder-context-menu'))) close();
+    }
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    window.addEventListener('blur', close);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+      window.removeEventListener('blur', close);
+    };
+  }, [folderMenu]);
 
   useEffect(() => {
     window.localStorage.setItem(EXPANDED_FOLDERS_KEY, JSON.stringify([...expandedFolderIds]));
@@ -207,7 +224,15 @@ export default function NavigationPane(props: NavigationPaneProps) {
               const isSelected = currentView === 'folder' && selectedFolderId === folder.id;
               const isExpanded = expandedFolderIds.has(folder.id);
               const folderDocuments = isExpanded ? documentsByFolder.get(folder.id) ?? [] : [];
-              const startRename = () => { setEditingFolderId(folder.id); setEditingFolderName(folder.name); };
+              function openFolderMenu(event: MouseEvent<HTMLButtonElement>) {
+                event.preventDefault();
+                const trigger = event.currentTarget;
+                const rect = trigger.getBoundingClientRect();
+                const keyboard = event.clientX === 0 && event.clientY === 0;
+                setFolderMenu({ folderId: folder.id, trigger,
+                  x: keyboard ? rect.left : event.clientX, y: keyboard ? rect.bottom : event.clientY });
+              }
+              const startRename = () => { setFolderMenu(null); setEditingFolderId(folder.id); setEditingFolderName(folder.name); };
               const commitRename = (name = editingFolderName) => { onRenameFolder(folder.id, name); setEditingFolderId(null); setEditingFolderName(''); };
               return <div className="folder-row" key={folder.id}>
                 {editingFolderId === folder.id ? <input
@@ -215,11 +240,29 @@ export default function NavigationPane(props: NavigationPaneProps) {
                   onChange={(event) => setEditingFolderName(event.target.value)} onBlur={(event) => commitRename(event.currentTarget.value)}
                   onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { setEditingFolderId(null); setEditingFolderName(''); } }}
                 /> : <>
-                  <button className="folder-toggle-button" type="button" style={{ marginLeft: `${folder.depth * 18}px` }} onClick={() => toggleFolder(folder.id)} title={isExpanded ? 'Replier le dossier' : 'Déplier le dossier'} aria-label={isExpanded ? 'Replier le dossier' : 'Déplier le dossier'}>{isExpanded ? '▾' : '▸'}</button>
-                  <button className={isSelected ? 'folder-button selected' : 'folder-button'} type="button" onClick={() => onViewChange('folder', folder.id)} onDoubleClick={startRename} title="Double-clic pour renommer">
+                  <button className="folder-toggle-button" type="button" style={{ marginLeft: `${folder.depth * 18}px` }} onClick={() => toggleFolder(folder.id)} onContextMenu={openFolderMenu} title={isExpanded ? 'Replier le dossier' : 'Déplier le dossier'} aria-label={isExpanded ? 'Replier le dossier' : 'Déplier le dossier'}>{isExpanded ? '▾' : '▸'}</button>
+                  <button className={isSelected ? 'folder-button selected' : 'folder-button'} type="button" onClick={() => onViewChange('folder', folder.id)} onDoubleClick={startRename}
+                    aria-haspopup="menu" onContextMenu={openFolderMenu} title="Double-clic pour renommer">
                     <span className="folder-label"><span className="folder-icon" aria-hidden="true" />{folder.name}</span><strong>{folderDocumentCounts[folder.id] ?? 0}</strong>
                   </button>
-                  {isSelected ? <button className="folder-rename-button" type="button" onClick={startRename}>Renommer</button> : null}
+                  {folderMenu?.folderId === folder.id && <div className="folder-context-menu" role="menu" aria-label={folder.name}
+                    style={{
+                      left: folderMenu.x < window.innerWidth / 2 ? folderMenu.x : undefined,
+                      right: folderMenu.x >= window.innerWidth / 2 ? window.innerWidth - folderMenu.x : undefined,
+                      top: folderMenu.y < window.innerHeight / 2 ? folderMenu.y : undefined,
+                      bottom: folderMenu.y >= window.innerHeight / 2 ? window.innerHeight - folderMenu.y : undefined,
+                    }}
+                    onBlur={() => setFolderMenu(null)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        folderMenu.trigger.focus();
+                        setFolderMenu(null);
+                      }
+                    }}>
+                    <button type="button" role="menuitem" autoFocus onClick={startRename}>Renommer</button>
+                  </div>}
                 </>}
                 {folderDocuments.map((document) => <button
                   className={selectedDocumentId === document.id ? 'tree-document-button selected' : 'tree-document-button'} key={document.id} type="button"

@@ -396,7 +396,7 @@ h2 {
 
 .folder-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 4px;
   align-items: center;
 }
@@ -474,16 +474,30 @@ h2 {
   font-size: 0.78rem;
 }
 
-.folder-rename-button {
-  min-height: 28px;
+.folder-context-menu {
+  position: fixed;
+  z-index: 10;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--surface);
-  color: var(--text-secondary);
+  box-shadow: 0 4px 16px var(--popover-shadow);
+  padding: 4px;
+}
+
+.folder-context-menu button {
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  border-radius: 3px;
+  padding: 5px 12px;
   cursor: pointer;
-  font-size: 0.75rem;
-  font-weight: 800;
-  padding: 0 6px;
+}
+
+.folder-context-menu button:hover,
+.folder-context-menu button:focus-visible {
+  background: var(--selected);
+  color: var(--selected-text);
+  outline: 1px solid var(--accent);
 }
 
 .folder-name-input {

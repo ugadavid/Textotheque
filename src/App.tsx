@@ -917,7 +917,7 @@ export default function App() {
     }
 
     try {
-      await refreshDocuments(selectedDocument?.id, documentView, selectedFolderId);
+      setFolders(await listFolders());
     } catch (loadError: unknown) {
       showOperationError('refresh-after-rename-folder', loadError, 'Dossier renomme, mais actualisation impossible.');
     }
