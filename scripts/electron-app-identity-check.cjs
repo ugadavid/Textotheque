@@ -6,7 +6,6 @@ const { productName } = require('../package.json');
 const { createTestTempDirectory, removeTestTempDirectory } = require('./test-temp-directory.cjs');
 
 const projectRoot = path.resolve(__dirname, '..');
-const mainPath = path.join(projectRoot, 'dist-electron', 'main.js');
 const outputPrefix = 'textotheque app identity: ';
 
 const tempDirectory = createTestTempDirectory('app-identity');
@@ -21,7 +20,7 @@ function inspectIdentity(dbPathOverride) {
     env.TEXTOTHEQUE_DB_PATH = dbPathOverride;
   }
 
-  const result = spawnSync(electronPath, [mainPath, '--textotheque-check-app-identity'], {
+  const result = spawnSync(electronPath, [projectRoot, '--textotheque-check-app-identity'], {
     cwd: projectRoot,
     env,
     encoding: 'utf8',

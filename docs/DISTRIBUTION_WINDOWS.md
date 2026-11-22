@@ -6,10 +6,10 @@ Pour choisir le niveau de qualification, fabriquer une candidate ou préparer le
 
 Textothèque possède deux runtimes indépendants, choisis avec `app.isPackaged` :
 
-| Runtime | Lancement | Nom visible | Profil | Renderer |
+| Runtime | Lancement | Titre de fenêtre | Profil | Renderer |
 |---|---|---|---|---|
-| DEV | `npm.cmd run dev` ou `START_TEXTOTHEQUE.bat` | Textotheque DEV | `%APPDATA%\Textotheque-Dev` | Vite, port strict 5173 |
-| STABLE | installation Windows | Textotheque | `%APPDATA%\Textotheque` | build local avec `file://` |
+| DEV | `npm.cmd run dev` ou `START_TEXTOTHEQUE.bat` | Textothèque DEV · `<version>` | `%APPDATA%\Textotheque-Dev` | Vite, port strict 5173 |
+| STABLE | installation Windows | Textothèque · `<version>` | `%APPDATA%\Textotheque` | build local avec `file://` |
 
 La STABLE conserve donc l’emplacement historique de la bibliothèque réelle. DEV crée ses propres `textotheque.sqlite`, `library-history.json`, session Chromium, caches et Local Storage. Aucune donnée STABLE n’est copiée vers DEV.
 

@@ -8,7 +8,6 @@ const { createTestTempDirectory, removeTestTempDirectory } = require('./test-tem
 const root = path.resolve(__dirname, '..');
 const stableExecutable = path.join(root, 'out', `Textotheque-win32-${process.arch}`, 'Textotheque.exe');
 const viteEntry = path.join(root, 'node_modules', 'vite', 'bin', 'vite.js');
-const mainEntry = path.join(root, 'dist-electron', 'main.js');
 assert(fs.existsSync(stableExecutable), 'Le package Textotheque STABLE est requis pour ce test.');
 
 const tempDirectory = createTestTempDirectory('concurrent-runtime');
@@ -60,7 +59,7 @@ async function waitFor(predicate, label, timeout = 20000) {
     stableProcess = spawn(stableExecutable, ['--textotheque-check-concurrent-runtime'], {
       cwd: tempDirectory, env: envFor(stable), stdio: 'ignore', windowsHide: true,
     });
-    devProcess = spawn(electronPath, [mainEntry, '--textotheque-check-concurrent-runtime'], {
+    devProcess = spawn(electronPath, [root, '--textotheque-check-concurrent-runtime'], {
       cwd: root, env: envFor(dev), stdio: 'ignore', windowsHide: true,
     });
     await waitFor(() => fs.existsSync(stable.report) && fs.existsSync(dev.report), 'rapports des deux runtimes');
@@ -71,6 +70,10 @@ async function waitFor(predicate, label, timeout = 20000) {
     assert.equal(stableReport.packaged, true);
     assert.equal(stableReport.name, 'Textotheque');
     assert.equal(stableReport.protocol, 'file:');
+    assert.equal(devReport.windowTitle, `Textothèque DEV · ${require('../package.json').version}`);
+    assert.equal(devReport.titleAfterLoad, devReport.windowTitle);
+    assert.equal(devReport.statusVersion, 'v' + require('../package.json').version);
+    console.log(devReport.windowTitle, devReport.statusVersion);
     assert.equal(devReport.packaged, false);
     assert.equal(devReport.name, 'Textotheque DEV');
     assert(devReport.href.startsWith('http://localhost:5173'));

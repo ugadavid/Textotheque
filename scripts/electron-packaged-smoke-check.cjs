@@ -54,6 +54,8 @@ try {
   assert.equal(report.packaged, true);
   assert.equal(report.name, 'Textotheque');
   assert.equal(report.version, require('../package.json').version);
+  assert.equal(report.windowTitle, `Textothèque · ${report.version}`);
+  assert.equal(report.statusVersion, `v${report.version}`);
   assert.equal(report.protocol, 'file:');
   assert.equal(report.preload, true);
   assert.equal(report.schemaVersion, 5);

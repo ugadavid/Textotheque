@@ -415,7 +415,7 @@ async function createWindow(show = true): Promise<void> {
     height: 820,
     minWidth: 980,
     minHeight: 640,
-    title: runtimeProfile.displayName,
+    title: `Textothèque${app.isPackaged ? '' : ' DEV'} · ${app.getVersion()}`,
     icon: windowIcon,
     backgroundColor: '#f5f2ec',
     webPreferences: {
@@ -425,6 +425,7 @@ async function createWindow(show = true): Promise<void> {
     },
   });
 
+  mainWindow.on('page-title-updated', event => event.preventDefault());
   if (process.platform === 'win32') {
     mainWindow.setAppDetails({ appId: appUserModelId, appIconPath: windowIcon });
   }
@@ -492,6 +493,7 @@ async function runPackagedSmokeCheck(): Promise<void> {
     const saved = await window.textotheque.createSavedSearch({ name: 'Smoke package', ...criteria }, library.path);
     const savedList = await window.textotheque.listSavedSearches();
     return {
+      statusVersion: document.querySelector('.status-bar span:last-child')?.textContent,
       protocol: location.protocol,
       href: location.href,
       preload: typeof window.textotheque.listDocuments === 'function',
@@ -507,6 +509,7 @@ async function runPackagedSmokeCheck(): Promise<void> {
     packaged: app.isPackaged,
     name: app.getName(),
     version: app.getVersion(),
+    windowTitle: mainWindow.getTitle(),
     userData: app.getPath('userData'),
     database: getDatabasePath(),
     renderer: resolveRendererTarget(app.isPackaged, __dirname),
@@ -528,6 +531,10 @@ async function runConcurrentRuntimeCheck(): Promise<void> {
   }
   await createWindow(false);
   if (!mainWindow) throw new Error('La fenetre du test simultane n a pas ete creee.');
+  const titleAfterLoad = mainWindow.getTitle();
+  const titleUpdated = new Promise<void>(resolve => mainWindow!.once('page-title-updated', () => resolve()));
+  await mainWindow.webContents.executeJavaScript("document.title = 'Titre de test du renderer'");
+  await titleUpdated;
   const rendererResult = await mainWindow.webContents.executeJavaScript(`(async () => {
     const library = await window.textotheque.getLibraryInfo();
     const document = await window.textotheque.createDocument(null);
@@ -535,7 +542,14 @@ async function runConcurrentRuntimeCheck(): Promise<void> {
       title: 'Runtime simultane', content: 'profil independant', notes: '',
       status: 'active', favorite: false, folder_id: null,
     }, library.path);
-    return { href: location.href, protocol: location.protocol, preload: typeof window.textotheque.listDocuments === 'function', library };
+    const page = window.document;
+    page.querySelector('.nav-view-button').click();
+    for (let i = 0; i < 100 && !page.querySelector('.document-catalog'); i++) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    if (!page.querySelector('.document-catalog')) throw new Error('Catalogue indisponible');
+    return { href: location.href, protocol: location.protocol, preload: typeof window.textotheque.listDocuments === 'function',
+      statusVersion: page.querySelector('.status-bar span:last-child')?.textContent, library };
   })()`);
   fs.writeFileSync(path.resolve(reportPath), `${JSON.stringify({
     packaged: app.isPackaged,
@@ -544,6 +558,8 @@ async function runConcurrentRuntimeCheck(): Promise<void> {
     sessionData: app.getPath('sessionData'),
     database: getDatabasePath(),
     history: process.env.TEXTOTHEQUE_LIBRARY_HISTORY_PATH,
+    windowTitle: mainWindow.getTitle(),
+    titleAfterLoad,
     ...rendererResult,
   }, null, 2)}\n`, 'utf8');
   const interval = setInterval(() => {
