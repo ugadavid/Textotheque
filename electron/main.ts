@@ -371,7 +371,8 @@ function refreshApplicationMenu(): void {
     buildSearchMenu(savedSearches, searchMenuState, sendSearchMenuAction),
     {
       label: 'Outils',
-      submenu: [{ label: 'Caractères spéciaux…', click: () => mainWindow?.webContents.send('tools:toggle-characters') }],
+      submenu: [{ label: 'Caractères spéciaux…', accelerator: 'CommandOrControl+Shift+U',
+        click: () => mainWindow?.webContents.send('tools:toggle-characters') }],
     },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
