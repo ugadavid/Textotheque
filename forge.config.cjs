@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const windowsIcon = path.join(__dirname, 'assets', 'branding', 'textotheque.ico');
 
 const runtimeRoots = ['/dist', '/dist-electron', '/node_modules'];
 const mainOutputs = new Set(fs.readdirSync(path.join(__dirname, 'electron'))
@@ -10,6 +11,8 @@ module.exports = {
   packagerConfig: {
     asar: true,
     executableName: 'Textotheque',
+    icon: windowsIcon,
+    extraResource: [windowsIcon],
     ignore: (filePath) => {
       const normalized = filePath.replace(/\\/g, '/');
       if (normalized === '' || normalized === '/package.json') return false;
@@ -29,6 +32,8 @@ module.exports = {
         description: 'Application desktop locale d’écriture et de classement de textes',
         exe: 'Textotheque.exe',
         setupExe: 'Textotheque Setup.exe',
+        setupIcon: windowsIcon,
+        iconUrl: 'https://raw.githubusercontent.com/ugadavid/Textotheque/65c87cfe8d7353d728598398e38b8216ad7336e9/assets/branding/textotheque.ico',
         noMsi: true,
       },
     },

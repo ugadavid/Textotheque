@@ -379,6 +379,9 @@ async function createWindow(show = true): Promise<void> {
     minWidth: 980,
     minHeight: 640,
     title: runtimeProfile.displayName,
+    icon: app.isPackaged
+      ? path.join(process.resourcesPath, 'textotheque.ico')
+      : path.join(__dirname, '..', 'assets', 'branding', 'textotheque.ico'),
     backgroundColor: '#f5f2ec',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),

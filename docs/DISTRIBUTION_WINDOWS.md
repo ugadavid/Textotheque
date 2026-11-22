@@ -61,9 +61,12 @@ python scripts/check-stable-upgrade.py out/avant-052 out/apres-052
 
 Le comparateur ouvre les copies en lecture seule, vérifie l’identité et l’intégrité SQLite, les lignes métier, le registre et l’identité Windows. Vérifier séparément dans le renderer les préférences présentes en baseline puis celles initialisées dans la candidate.
 
+## Identité visuelle Windows
+
+Les sources validées sont `assets/branding/textotheque-icon.png` (référence graphique) et `assets/branding/textotheque.ico` (Windows). Forge applique cet ICO à l’exécutable et à Squirrel Setup. La fenêtre DEV l’ouvre dans le dépôt. En STABLE, elle l’ouvre dans les ressources externes du package. Le PNG reste dans le dépôt. Le raccourci utilise l’exécutable installé. Pour Applications installées, Squirrel dispose également d’une URL immuable vers le même ICO versionné.
+
 ## Limites actuelles
 
 - Aucun serveur, port Vite ou chemin vers le dépôt source n’est requis par STABLE.
 - L’auto-update et la publication distante ne sont pas configurés.
 - La build locale n’est pas signée : Windows peut afficher un avertissement d’éditeur inconnu.
-- Aucune icône Textothèque exploitable n’existait dans le dépôt ; l’identité graphique est reportée.
