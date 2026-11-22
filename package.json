@@ -1,7 +1,7 @@
 {
   "name": "textotheque",
   "productName": "Textotheque",
-  "version": "0.1.28",
+  "version": "0.1.29",
   "description": "Application desktop locale d’écriture et de classement de textes",
   "author": "David",
   "private": true,
@@ -15,6 +15,7 @@
     "build": "tsc -b && vite build && tsc -p electron/tsconfig.json",
     "package:win": "npm run build && electron-forge package --platform=win32",
     "make:win": "npm run build && electron-forge make --platform=win32",
+    "release:win": "npm run make:win && node scripts/stage-windows-release.cjs",
     "start": "npm run build && electron dist-electron/main.js",
     "test:db": "tsc -p electron/tsconfig.json && electron scripts/electron-db-check.cjs",
     "test:preload": "tsc -p electron/tsconfig.json && electron scripts/electron-preload-api-check.cjs",

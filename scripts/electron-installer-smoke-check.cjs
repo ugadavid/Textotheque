@@ -36,7 +36,7 @@ try {
   run(installedExecutable, ['--textotheque-check-packaged-smoke'], smokeEnv, 30000);
   const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
   assert.equal(report.packaged, true);
-  assert.equal(report.version, '0.1.28');
+  assert.equal(report.version, require('../package.json').version);
   assert.equal(report.protocol, 'file:');
   assert.equal(report.autosave && report.search && report.todo && report.savedSearch, true);
   assert(!report.href.includes('localhost:5173'));

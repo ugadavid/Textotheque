@@ -2,6 +2,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const runtimeRoots = ['/dist', '/dist-electron', '/node_modules'];
+const mainOutputs = new Set(fs.readdirSync(path.join(__dirname, 'electron'))
+  .filter(file => /\.(?:ts|cts)$/.test(file))
+  .map(file => '/dist-electron/' + file.replace(/\.ts$/, '.js').replace(/\.cts$/, '.cjs')));
 
 module.exports = {
   packagerConfig: {
@@ -11,7 +14,7 @@ module.exports = {
       const normalized = filePath.replace(/\\/g, '/');
       if (normalized === '' || normalized === '/package.json') return false;
       if (normalized.endsWith('.d.ts') || normalized.endsWith('.d.cts')) return true;
-      if (normalized === '/dist-electron/preload.js') return true;
+      if (normalized.startsWith('/dist-electron/')) return !mainOutputs.has(normalized);
       return !runtimeRoots.some((root) => normalized === root || normalized.startsWith(`${root}/`));
     },
   },

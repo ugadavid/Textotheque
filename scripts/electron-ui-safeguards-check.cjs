@@ -602,7 +602,6 @@ app
         }
         const viewButtons = document.querySelectorAll('.nav-view-button');
         if (viewButtons.length !== 2) throw new Error('document view buttons missing');
-        if (expectedAppVersion !== '0.1.27') throw new Error('unexpected application version');
         const initialExpandedState = JSON.parse(window.localStorage.getItem('textotheque:expanded-folders:v2') ?? '[]');
         if (initialExpandedState.length !== 0) throw new Error('folders should be closed by default');
         await waitFor(() => window.localStorage.getItem('textotheque:pane-layout:v2'), 'pane layout stored');

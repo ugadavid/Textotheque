@@ -53,7 +53,7 @@ try {
   const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
   assert.equal(report.packaged, true);
   assert.equal(report.name, 'Textotheque');
-  assert.equal(report.version, '0.1.28');
+  assert.equal(report.version, require('../package.json').version);
   assert.equal(report.protocol, 'file:');
   assert.equal(report.preload, true);
   assert.equal(report.schemaVersion, 5);

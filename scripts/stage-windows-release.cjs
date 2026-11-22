@@ -1,0 +1,30 @@
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+const { version } = require('../package.json');
+
+const root = path.resolve(__dirname, '..');
+const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+assert.match(version, /^\d+\.\d+\.\d+$/);
+assert.equal(require('../package-lock.json').packages[''].version, version);
+const source = path.join(root, 'out', 'make', 'squirrel.windows', process.arch);
+const setup = 'Textotheque Setup.exe';
+const packageName = `Textotheque-${version}-full.nupkg`;
+const releases = fs.readFileSync(path.join(source, 'RELEASES'), 'utf8').trim().split(/\r?\n/);
+const entry = releases.map(line => line.trim().split(/\s+/)).find(parts => parts[1] === packageName);
+assert.ok(entry, 'Paquet de la version attendue absent de RELEASES');
+const hash = (file, algorithm) => crypto.createHash(algorithm).update(fs.readFileSync(file)).digest('hex');
+assert.equal(hash(path.join(source, packageName), 'sha1'), entry[0].toLowerCase());
+const commit = git('rev-parse', 'HEAD');
+const output = path.join(root, 'dist-release', 'Textotheque-' + version);
+fs.mkdirSync(output, {recursive: true});
+const files = [setup, packageName, 'RELEASES'].map(name => {
+  const file = path.join(output, name);
+  fs.copyFileSync(path.join(source, name), file);
+  return { name, bytes: fs.statSync(file).size, sha256: hash(file, 'sha256') };
+});
+const manifest = {version, commit, dirty: Boolean(git('status', '--porcelain')), date: new Date().toISOString(), files};
+fs.writeFileSync(path.join(output, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+console.log(output, files[0].sha256);
