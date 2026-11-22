@@ -709,16 +709,9 @@ Ne pas recréer une seconde constante de version dans `src/`.
 
 Le numéro de mission et le numéro de version sont indépendants.
 
-Règle générale :
+Codex conserve la version en place tant que la mission ne relaie pas une décision explicite de David. Cette règle couvre aussi la progression ordinaire `0.1.x → 0.1.(x+1)`. Le passage à `0.2.0` est un jalon produit exceptionnel que seul David décide.
 
-```text
-0.1.x = évolution progressive du produit
-0.2.x = vrai nouveau palier décidé explicitement
-```
-
-Ne pas passer à `0.2.0` sans décision explicite du mainteneur.
-
-Ne pas modifier la version pour une consolidation purement interne si le comportement fonctionnel ne le justifie pas.
+Pour une version Windows, un Setup, Squirrel, `release:win`, une remise pour Zenith Ice ou un changement d’icône ou d’identité affectant le packaging, lire le [runbook de release](docs/RELEASE_WINDOWS_RUNBOOK.md) et la [documentation de distribution](docs/DISTRIBUTION_WINDOWS.md). Codex prépare les artefacts sur CODEX_VM. David assure le transfert manuel et l’installation réelle sur Zenith Ice. Les binaires de livraison restent hors Git sauf demande explicite de David.
 
 ---
 

@@ -1,5 +1,7 @@
 # Distribution Windows de Textothèque
 
+Pour choisir le niveau de qualification, fabriquer une candidate ou préparer le dossier de remise à David, suivre le [runbook de release Windows](RELEASE_WINDOWS_RUNBOOK.md).
+
 ## DEV et STABLE
 
 Textothèque possède deux runtimes indépendants, choisis avec `app.isPackaged` :
