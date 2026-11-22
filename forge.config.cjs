@@ -33,7 +33,7 @@ module.exports = {
         exe: 'Textotheque.exe',
         setupExe: 'Textotheque Setup.exe',
         setupIcon: windowsIcon,
-        iconUrl: 'https://raw.githubusercontent.com/ugadavid/Textotheque/65c87cfe8d7353d728598398e38b8216ad7336e9/assets/branding/textotheque.ico',
+        iconUrl: 'https://raw.githubusercontent.com/ugadavid/Textotheque/c531bfbd297f15aa22d08b6f7823e2e2b6fc18e1/assets/branding/textotheque.ico',
         noMsi: true,
       },
     },
