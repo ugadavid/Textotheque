@@ -3,7 +3,7 @@ const { spawn } = require('node:child_process');
 const { createTestTempDirectory, removeTestTempDirectory } = require('./test-temp-directory.cjs');
 
 // This function runs in the real renderer. Navigation always goes through the UI.
-async function checkEditor(phase, expectedDocuments) {
+async function checkEditor(phase, expectedDocuments, closingPosition) {
   const find = (selector) => document.querySelector(selector);
   const editor = () => find('.content-editor');
   const title = () => find('.title-input')?.value;
@@ -64,7 +64,7 @@ async function checkEditor(phase, expectedDocuments) {
     // The last open library contains only Gamma: verify its very first mount,
     // before a second navigation could accidentally repair startup restoration.
     await wait(() => title() === 'Gamma' && editor(), 'Gamma au démarrage');
-    expectPosition([8200, 8400, 'backward', 3400, 0]);
+    expectPosition(closingPosition);
     await checkDocument('Gamma');
   }
   find('.nav-view-button').click();
@@ -128,7 +128,12 @@ async function checkEditor(phase, expectedDocuments) {
   const rangeB = place(1500, 1620, 'forward', 750);
   await open('Alpha');
   expectPosition(caretA);
-  const rangeA = place(7300, 7440, 'backward', 2700);
+  place(7300, 7440, 'backward', 2700);
+  for (let i = 0; i < 3; i++) {
+    editor().dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowDown', ctrlKey: true, bubbles: true, cancelable: true}));
+  }
+  const rangeA = position();
+  check(rangeA[3] > 2700, 'Défilement avant Alpha → Beta → Alpha');
   await open('Beta');
   expectPosition(rangeB);
   await open('Alpha');
@@ -174,6 +179,67 @@ async function checkEditor(phase, expectedDocuments) {
   return api.listDocuments();
 }
 
+async function checkScrollKeys(win, file, gamma) {
+  const assert = require('node:assert/strict');
+  const read = code => win.webContents.executeJavaScript(code);
+  const state = () => read(`(() => {
+    const e = document.querySelector('.content-editor');
+    return [e.selectionStart, e.selectionEnd, e.selectionDirection, e.scrollTop, e.scrollLeft];
+  })()`);
+  const line = await read("parseFloat(getComputedStyle(document.querySelector('.content-editor')).lineHeight)");
+  const max = await read("document.querySelector('.content-editor').scrollHeight - document.querySelector('.content-editor').clientHeight");
+  async function place(start, end, direction, top) {
+    await read(`(() => {
+      const e = document.querySelector('.content-editor');
+      e.focus();
+      e.setSelectionRange(${start}, ${end}, '${direction}');
+      e.scrollTop = ${top};
+    })()`);
+  }
+  async function press(keyCode, repeated = false) {
+    const before = await state();
+    const modifiers = ['control'];
+    if (repeated) modifiers.push('isAutoRepeat');
+    for (const type of ['keyDown', 'keyUp']) win.webContents.sendInputEvent({type, keyCode, modifiers});
+    const after = await state();
+    const expectedTop = Math.max(0, Math.min(max, before[3] + (keyCode === 'Down' ? line : -line)));
+    assert.ok(Math.abs(after[3] - expectedTop) <= 1, 'Défilement obtenu ' + after[3] + ', attendu ' + expectedTop);
+    assert.deepEqual(after.slice(0, 3), before.slice(0, 3));
+    assert.equal(after[4], before[4]);
+    assert.ok(await read("document.activeElement.matches('.content-editor') && !document.querySelector('.title-dirty-marker')"));
+    return after;
+  }
+  const observer = new (require('better-sqlite3'))(file, {readonly: true});
+  try {
+    const version = observer.pragma('data_version', {simple: true});
+    for (const [end, direction] of [[6200, 'none'], [6350, 'forward'], [6350, 'backward']]) {
+      await place(6200, end, direction, 2100);
+      await press('Down');
+      await press('Up');
+    }
+    await place(6200, 6350, 'backward', 0);
+    await press('Up');
+    await place(6200, 6350, 'forward', max);
+    await press('Down');
+    assert.ok(await read(`['ArrowUp', 'ArrowDown'].every(key =>
+      [{}, {shiftKey:true}, {ctrlKey:true, shiftKey:true}, {ctrlKey:true, altKey:true}, {ctrlKey:true, metaKey:true}]
+        .every(mods => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', {key, ...mods, bubbles:true, cancelable:true}))))`));
+    await place(8200, 8400, 'backward', 3400);
+    await press('Down');
+    await press('Down', true);
+    const closing = await press('Down', true);
+    // Cover the 1.5 s autosave window before the close/navigation guard runs.
+    await new Promise(resolve => setTimeout(resolve, 1750));
+    assert.deepEqual(await state(), closing);
+    assert.equal(await read("document.querySelector('.content-editor').value"), gamma.content);
+    const saved = observer.prepare('SELECT updated_at, content FROM documents WHERE id = ?').get(gamma.id);
+    assert.deepEqual(saved, {updated_at: gamma.updated_at, content: gamma.content});
+    assert.equal(observer.pragma('data_version', {simple: true}), version);
+    console.log('Ctrl+flèches OK, pas CSS', line, 'px, position avant fermeture', closing);
+    return closing;
+  } finally { observer.close(); }
+}
+
 async function runElectron(temp, phase) {
   const { app } = require('electron');
   const fs = require('node:fs');
@@ -194,17 +260,18 @@ async function runElectron(temp, phase) {
   app.once('browser-window-created', (_, win) => {
     win.webContents.once('did-finish-load', async () => {
       const baseline = path.join(temp, 'expected-documents.json');
-      const run = (step, docs = []) => win.webContents.executeJavaScript(
-        '(' + checkEditor.toString() + ')(' + JSON.stringify(step) + ',' + JSON.stringify(docs) + ')');
+      const run = (step, docs = [], closingPosition = null) => win.webContents.executeJavaScript(
+        '(' + checkEditor.toString() + ')(...' + JSON.stringify([step, docs, closingPosition]) + ')');
       try {
         if (phase === 'first') {
           const firstDocs = await run('first');
           win.webContents.send('library:menu-action', { action: 'known', path: second });
           const secondDocs = await run('switch');
-          fs.writeFileSync(baseline, JSON.stringify([...firstDocs, ...secondDocs]));
+          const closingPosition = await checkScrollKeys(win, second, secondDocs[0]);
+          fs.writeFileSync(baseline, JSON.stringify({docs: [...firstDocs, ...secondDocs], closingPosition}));
         } else if (phase === 'restart') {
-          const docs = JSON.parse(fs.readFileSync(baseline, 'utf8'));
-          await run('restart', docs);
+          const {docs, closingPosition} = JSON.parse(fs.readFileSync(baseline, 'utf8'));
+          await run('restart', docs, closingPosition);
           win.webContents.send('library:menu-action', { action: 'known', path: process.env.TEXTOTHEQUE_DB_PATH });
           await run('reopen-first', docs);
         } else await run(phase);

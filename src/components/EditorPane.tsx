@@ -88,16 +88,15 @@ function ContentEditor({ documentId, positions, libraryPath, capturePositionRef,
   }, [content, positions]);
 
   function handleContentKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
-    if (
-      event.key !== 'Tab' ||
-      event.shiftKey ||
-      event.ctrlKey ||
-      event.altKey ||
-      event.metaKey ||
-      isDeleted
-    ) {
+    if (isDeleted || event.shiftKey || event.altKey || event.metaKey) return;
+    if (event.ctrlKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      event.preventDefault();
+      const editor = event.currentTarget;
+      const lineHeight = Number.parseFloat(getComputedStyle(editor).lineHeight);
+      editor.scrollTop += event.key === 'ArrowDown' ? lineHeight : -lineHeight;
       return;
     }
+    if (event.key !== 'Tab' || event.ctrlKey) return;
 
     event.preventDefault();
     const selectionStart = event.currentTarget.selectionStart;
