@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-const initialFavorites = '😂 🤣 🚀 💙 🧠 🗃️ 💝 🪄 🧶 📦 🐸'.split(' ');
+const initialCharacters = '😂 🤣 🚀 💙 🧠 🗃️ 💝 🪄 🧶 📦 🐸'.split(' ');
 const categories: Record<string, string[]> = {
   Typographie: '— – … « » “ ” ‘ ’ ° №'.split(' '),
   Flèches: '← → ↑ ↓ ↔ ↕ ⇒ ⇐ ⇔'.split(' '),
@@ -13,7 +13,6 @@ const names: Record<string, string> = {
   '🗃️': 'boîte à fiches', '💝': 'cœur enrubanné', '🪄': 'baguette magique', '🧶': 'pelote', '📦': 'colis', '🐸': 'grenouille',
 };
 const storageKey = 'textotheque:special-characters:v1';
-const initialCharacters = [...initialFavorites, ...Object.values(categories).flat()];
 type Position = { x: number; y: number };
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 function isCharacter(value: unknown): value is string {
@@ -26,17 +25,18 @@ function loadPreferences() {
     Array.isArray(value) ? [...new Set(value.filter(isCharacter))] : fallback;
   try {
     const data = JSON.parse(localStorage.getItem(storageKey) ?? 'null');
-    const favorites = list(data?.favorites, initialFavorites);
-    // In 056 a removed personal character could be starred again from Recents.
-    const personal = [...new Set([...list(data?.personal, []), ...favorites.filter(g => !initialCharacters.includes(g))])];
+    const favorites = list(data?.favorites, []);
+    const oldDefault = !data?.manualFavorites && favorites.length === initialCharacters.length
+      && favorites.every((glyph, index) => glyph === initialCharacters[index]);
+    const personal = list(data?.personal, []);
     const position: Position | undefined = Number.isFinite(data?.position?.x) && Number.isFinite(data?.position?.y)
       ? { x: data.position.x, y: data.position.y } : undefined;
     return {
-      favorites, personal, position,
+      favorites: oldDefault ? [] : favorites, personal, position,
       recent: list(data?.recent, []).slice(0, 12),
     };
   } catch {
-    return { favorites: initialFavorites, personal: [] as string[], recent: [] as string[], position: undefined };
+    return { favorites: [] as string[], personal: [] as string[], recent: [] as string[], position: undefined };
   }
 }
 
@@ -54,14 +54,32 @@ export default function CharacterPalette({ editable, onInsert, onClose }: Props)
   const drag = useRef<(Position & { pointerId: number }) | null>(null);
   const [position, setPosition] = useState(prefs.position);
   const [entry, setEntry] = useState<string | null>(null);
+  const [menu, setMenu] = useState<(Position & { glyph: string; trigger: HTMLButtonElement }) | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const groups: Record<string, string[]> = {
     'Mes caractères': [...new Set([...prefs.personal, ...initialCharacters])],
     Favoris: prefs.favorites, Récents: prefs.recent, ...categories,
   };
 
   useEffect(() => {
-    try { localStorage.setItem(storageKey, JSON.stringify(prefs)); } catch { /* Profil en lecture seule. */ }
+    try { localStorage.setItem(storageKey, JSON.stringify({ ...prefs, manualFavorites: true })); } catch { /* Profil en lecture seule. */ }
   }, [prefs]);
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    function outside(e: PointerEvent) {
+      if (!menuRef.current?.contains(e.target as Node)) close();
+    }
+    document.addEventListener('pointerdown', outside, true);
+    window.addEventListener('resize', close);
+    window.addEventListener('blur', close);
+    return () => {
+      document.removeEventListener('pointerdown', outside, true);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('blur', close);
+    };
+  }, [menu]);
 
   function bounded({ x, y }: Position): Position {
     const rect = panel.current!.getBoundingClientRect();
@@ -105,8 +123,8 @@ export default function CharacterPalette({ editable, onInsert, onClose }: Props)
   function toggleFavorite(glyph: string) {
     setPrefs(p => p.favorites.includes(glyph)
       ? { ...p, favorites: p.favorites.filter(item => item !== glyph) }
-      : { ...p, favorites: [...p.favorites, glyph],
-          personal: initialCharacters.includes(glyph) || p.personal.includes(glyph) ? p.personal : [...p.personal, glyph] });
+      : { ...p, favorites: [...p.favorites, glyph] });
+    setMenu(null);
   }
 
   return <aside ref={panel} className="character-palette" aria-label="Caractères spéciaux"
@@ -130,16 +148,18 @@ export default function CharacterPalette({ editable, onInsert, onClose }: Props)
       {groups[category].map(glyph => {
         const label = names[glyph] ? glyph + ' — ' + names[glyph] : glyph;
         return <div key={glyph}>
-          <button className="character-tile" type="button" disabled={!editable}
+          <button className="character-tile" type="button" aria-disabled={!editable} aria-haspopup="menu"
+            onContextMenu={e => {
+              e.preventDefault();
+              const trigger = e.currentTarget;
+              const rect = trigger.getBoundingClientRect();
+              const keyboard = !e.clientX && !e.clientY;
+              setMenu({ glyph, trigger, x: keyboard ? rect.left : e.clientX, y: keyboard ? rect.bottom : e.clientY });
+            }}
             title={label} aria-label={label} onClick={() => {
               if (editable && onInsert(glyph)) setPrefs(p => ({ ...p, recent: [glyph, ...p.recent.filter(item => item !== glyph)].slice(0, 12) }));
             }}>{glyph}</button>
-          <button className="character-star" type="button" aria-label={'Favori ' + glyph}
-            aria-pressed={prefs.favorites.includes(glyph)} onClick={() => toggleFavorite(glyph)}
-            title={prefs.favorites.includes(glyph) ? 'Retirer des favoris' : 'Ajouter aux favoris'}>
-            {prefs.favorites.includes(glyph) ? '★' : '☆'}
-          </button>
-          {category === 'Mes caractères' && prefs.personal.includes(glyph) && <button className="character-remove" type="button"
+          {category === 'Mes caractères' && prefs.personal.includes(glyph) && !initialCharacters.includes(glyph) && <button className="character-remove" type="button"
             aria-label={'Supprimer ' + glyph} title="Supprimer de Mes caractères"
             onClick={() => setPrefs(p => ({ ...p, personal: p.personal.filter(v => v !== glyph),
               favorites: p.favorites.filter(v => v !== glyph) }))}>×</button>}
@@ -162,5 +182,22 @@ export default function CharacterPalette({ editable, onInsert, onClose }: Props)
         <button type="button" aria-label="Annuler l’ajout" onClick={() => setEntry(null)}>×</button>
         {entry && !isCharacter(entry) && <small>Saisissez un seul caractère.</small>}
       </form>}
+    {menu && <div ref={menuRef} className="character-context-menu" role="menu" aria-label={menu.glyph}
+      style={{
+        ...(menu.x < window.innerWidth / 2 ? { left: menu.x } : { right: window.innerWidth - menu.x }),
+        ...(menu.y < window.innerHeight / 2 ? { top: menu.y } : { bottom: window.innerHeight - menu.y }),
+      }}
+      onBlur={() => setMenu(null)}
+      onKeyDown={e => {
+        if (e.key !== 'Escape') return;
+        e.preventDefault();
+        e.stopPropagation();
+        menu.trigger.focus();
+        setMenu(null);
+      }}>
+      <button type="button" role="menuitem" autoFocus onClick={() => toggleFavorite(menu.glyph)}>
+        {prefs.favorites.includes(menu.glyph) ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+      </button>
+    </div>}
   </aside>;
 }

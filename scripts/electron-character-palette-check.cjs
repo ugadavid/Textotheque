@@ -33,7 +33,21 @@ async function checkPalette(win, phase) {
     const b = [...document.querySelectorAll('.character-tile')].find(b => b.textContent === ${JSON.stringify(glyph)});
     b.focus(); b.click();
   })()`);
-  const star = glyph => click('.character-star[aria-label="Favori ' + glyph + '"]');
+  const item = "document.querySelector('.character-context-menu [role=menuitem]')";
+  async function context(glyph) {
+    await read(`[...document.querySelectorAll('.character-tile')].find(b => b.textContent === ${JSON.stringify(glyph)})
+      .dispatchEvent(new MouseEvent('contextmenu',{button:2,bubbles:true,cancelable:true,clientX:innerWidth-1,clientY:innerHeight-1}))`);
+    await wait(item);
+    assert.ok(await read(`(() => { const r = ${item}.parentElement.getBoundingClientRect();
+      return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })()`));
+  }
+  async function favorite(glyph) {
+    const remove = (await prefs()).favorites.includes(glyph);
+    await context(glyph);
+    assert.equal(await read(item + '.textContent'), remove ? 'Retirer des favoris' : 'Ajouter aux favoris');
+    await read(item + '.click()');
+    await wait('!' + item);
+  }
   const glyphs = () => read("[...document.querySelectorAll('.character-tile')].map(b => b.textContent)");
   const location = () => read(`(() => { const {x,y} = ${panel}.getBoundingClientRect(); return {x,y}; })()`);
   async function dragTo(x,y) {
@@ -55,15 +69,15 @@ async function checkPalette(win, phase) {
   assert.equal(await read("document.querySelector('.character-controls select').value"), 'Mes caractères');
   assert.ok(!await read(panel + ".innerText.includes('Organiser')"));
   if (phase === 'invalid') {
-    assert.deepEqual(await prefs(), {favorites:initial, personal:[], recent:[]});
+    assert.deepEqual(await prefs(), {favorites:[], personal:[], recent:[], manualFavorites:true});
     const empty = path.join(path.dirname(process.env.TEXTOTHEQUE_DB_PATH), 'empty.sqlite');
     const {createNewTextothequeDatabase} = await import('../dist-electron/database.js');
     createNewTextothequeDatabase(empty).close();
     win.webContents.send('library:menu-action', {action:'known', path:empty});
     await wait("document.querySelector('.library-name')?.textContent.includes('empty.sqlite')");
-    assert.ok(await read("!document.querySelector('.content-editor') && document.querySelector('.character-tile').disabled"));
-    await star('🐸');
-    assert.deepEqual((await prefs()).favorites, initial.slice(0, -1));
+    assert.ok(await read("!document.querySelector('.content-editor') && document.querySelector('.character-tile').ariaDisabled === 'true'"));
+    await favorite('🐸');
+    assert.deepEqual((await prefs()).favorites, ['🐸']);
     return;
   }
   if (phase === 'restart') {
@@ -78,19 +92,28 @@ async function checkPalette(win, phase) {
     await category('Mes caractères');
     await click('.character-remove');
     assert.deepEqual((await prefs()).personal, []);
-    assert.deepEqual((await prefs()).favorites, initial);
+    assert.deepEqual((await prefs()).favorites, ['🐸']);
     assert.deepEqual(await read('window.textotheque.getDocument(1)'), before);
     await read("localStorage.setItem('textotheque:special-characters:v1', '{')");
     return;
   }
 
   const allInitial = await glyphs();
-  assert.deepEqual(allInitial.slice(0,11), initial);
+  assert.deepEqual(allInitial, initial);
+  assert.equal(await read("document.querySelectorAll('.character-star, .character-grid [aria-pressed]').length"), 0);
   assert.equal(allInitial.length, new Set(allInitial).size);
-  assert.deepEqual((await prefs()).favorites, initial);
+  assert.deepEqual((await prefs()).favorites, []);
   toggle.click();
   await wait('!' + panel);
-  const legacy = {favorites:['🦊','🧠'], personal:['🦊','→'], recent:['→','🦊']};
+  const legacy = {favorites:['🦊','🧠'], personal:['🦊','→'], recent:['→','🦊'], position:{x:39,y:41}};
+  await read(`localStorage.setItem('${key}', ${JSON.stringify(JSON.stringify({...legacy, favorites:initial}))})`);
+  toggle.click(); await wait(panel);
+  assert.deepEqual(await prefs(), {...legacy, favorites:[], manualFavorites:true});
+  for (const glyph of initial) await favorite(glyph);
+  toggle.click(); await wait('!' + panel);
+  toggle.click(); await wait(panel);
+  assert.deepEqual((await prefs()).favorites, initial);
+  toggle.click(); await wait('!' + panel);
   await read(`localStorage.setItem('${key}', ${JSON.stringify(JSON.stringify(legacy))})`);
   function shortcut() {
     for (const type of ['keyDown','keyUp']) win.webContents.sendInputEvent({type,keyCode:'U',modifiers:['control','shift']});
@@ -98,11 +121,11 @@ async function checkPalette(win, phase) {
   win.focus();
   shortcut();
   await wait(panel);
-  assert.deepEqual(await prefs(), legacy);
-  assert.deepEqual(new Set(await glyphs()), new Set([...allInitial,'🦊']));
-  assert.equal((await glyphs()).length, allInitial.length+1);
+  assert.deepEqual(await prefs(), {...legacy, manualFavorites:true});
+  assert.deepEqual(new Set(await glyphs()), new Set([...allInitial,'🦊','→']));
+  assert.equal((await glyphs()).length, allInitial.length+2);
   await click('.character-remove[aria-label="Supprimer →"]');
-  assert.ok((await glyphs()).includes('→'));
+  assert.ok(!(await glyphs()).includes('→'));
   assert.equal(await read("document.querySelectorAll('.character-remove').length"), 1);
   shortcut();
   await wait('!' + panel);
@@ -129,25 +152,41 @@ async function checkPalette(win, phase) {
     await type(composed);
     await click('.character-palette [type=submit]');
     assert.deepEqual(await glyphs(), [composed, ...allInitial]);
-    assert.deepEqual((await prefs()).favorites, initial);
-    await star(composed);
+    assert.deepEqual((await prefs()).favorites, []);
+    await favorite(composed);
     await category('Favoris');
-    await star(composed);
+    await favorite(composed);
     assert.ok(!(await glyphs()).includes(composed));
     await category('Mes caractères');
     assert.ok((await glyphs()).includes(composed));
-    await star(composed);
+    await favorite(composed);
     assert.equal(observer.pragma('data_version', {simple:true}), before);
   } finally { observer.close(); }
 
   await click('.nav-view-button');
   await wait("document.querySelector('.catalog-row')");
-  assert.ok(await read("document.querySelector('.character-tile').disabled"));
+  assert.ok(await read("document.querySelector('.character-tile').ariaDisabled === 'true'"));
   await click('.catalog-row');
   const editor = "document.querySelector('.content-editor')";
   await wait(editor + "?.value === 'abcdef'");
   await read(editor + ".focus(); " + editor + ".setSelectionRange(2,2)");
-  await star('→'); await star('→');
+  const point = await read(`(() => {
+    const r = document.querySelector('.character-tile[title^="🐸"]').getBoundingClientRect();
+    return {x:Math.round(r.left+r.width/2), y:Math.round(r.top+r.height/2)};
+  })()`);
+  for (const type of ['mouseDown','mouseUp']) win.webContents.sendInputEvent({type, button:'right', clickCount:1, ...point});
+  await wait(item);
+  for (const type of ['keyDown','keyUp']) win.webContents.sendInputEvent({type, keyCode:'Escape'});
+  await wait('!' + item);
+  await context('🐸');
+  await read("document.querySelector('.character-controls').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))");
+  await wait('!' + item);
+  await category('Flèches');
+  await favorite('→'); await favorite('→');
+  await category('Mes caractères');
+  await favorite('🐸');
+  assert.deepEqual(await read(`[${editor}.value,${editor}.selectionStart,${editor}.selectionEnd]`), ['abcdef',2,2]);
+  assert.deepEqual((await prefs()).recent, []);
   await dragTo(2000,2000);
   const inBounds = `(() => {const r=${panel}.getBoundingClientRect();return r.x>=0 && r.y>=0 && r.right<=innerWidth+1 && r.bottom<=innerHeight+1})()`;
   assert.ok(await read(inBounds));
@@ -181,18 +220,20 @@ async function checkPalette(win, phase) {
   for (const [name, list] of Object.entries(lists)) {
     await category(name); assert.deepEqual(await glyphs(), list.split(' '));
   }
-  assert.deepEqual(allInitial, [...new Set([...initial, ...Object.values(lists).flatMap(list => list.split(' '))])]);
   await category('Typographie');
   for (const glyph of lists.Typographie.split(' ')) await tile(glyph);
   await tile('—');
   const expected = ['—', ...lists.Typographie.split(' ').slice(1).reverse(), '🐸'];
   await category('Récents'); assert.deepEqual(await glyphs(), expected);
+  await favorite('—');
+  await category('Mes caractères'); assert.ok(!(await glyphs()).includes('—'));
+  await category('Récents'); await favorite('—');
   await read(editor + ".focus(); document.execCommand('insertText',false,'Z')");
   assert.deepEqual((await prefs()).recent, expected);
   await wait("!document.querySelector('.title-dirty-marker')");
   await click('.nav-view-button:nth-child(2)');
   await wait(editor + '?.disabled');
-  assert.ok(await read("document.querySelector('.character-tile').disabled"));
+  assert.ok(await read("document.querySelector('.character-tile').ariaDisabled === 'true'"));
   await tile('—');
   assert.deepEqual((await prefs()).recent, expected);
   await read("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))");
