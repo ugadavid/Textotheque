@@ -154,6 +154,7 @@ textarea {
 }
 
 .metadata-pane {
+  min-width: 0;
   grid-column: 5;
   border-right: 0;
   border-left: 1px solid var(--border);
@@ -878,21 +879,11 @@ h2 {
 }
 
 .advanced-search-button {
-  border: 1px solid var(--border-control);
-  border-radius: 7px;
-  background: var(--surface);
-  color: var(--text-secondary);
-  cursor: pointer;
-  padding: 7px 9px;
-  font-size: 0.74rem;
-  font-weight: 750;
   white-space: nowrap;
 }
 
 .advanced-search-button.active {
-  border-color: var(--selected-border);
-  background: var(--selected);
-  color: var(--selected-text);
+  box-shadow: inset 0 0 0 2px var(--on-action);
 }
 
 .advanced-search-panel {
@@ -1199,6 +1190,13 @@ h2 {
   gap: 8px 10px;
 }
 
+@container (width > 48rem) {
+  .editor-toolbar:not(.catalog-header):not(:has(.restore-button)) {
+    grid-template-areas: "navigation todo heading query advanced metadata";
+    grid-template-columns: auto auto minmax(0, 1fr) minmax(0, 1.45fr) auto auto;
+  }
+}
+
 .toggle-navigation-button { grid-area: navigation; }
 .todo-toolbar-button { grid-area: todo; }
 .title-row, .catalog-heading { grid-area: heading; }
@@ -1207,7 +1205,7 @@ h2 {
   grid-area: advanced;
   justify-self: end;
 }
-.save-controls, .catalog-count {
+.restore-button, .catalog-count {
   grid-area: context;
   justify-self: end;
 }
@@ -1217,21 +1215,13 @@ h2 {
 }
 
 .todo-toolbar-button {
-  min-height: 32px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--text-secondary);
-  cursor: pointer;
-  padding: 0 9px;
-  font-size: 0.78rem;
-  font-weight: 800;
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .todo-toolbar-button.active {
-  border-color: var(--accent);
-  background: var(--selected);
-  color: var(--selected-text);
+  background: var(--danger);
+  color: var(--on-action);
 }
 
 .pane-toggle-button {
@@ -1358,34 +1348,6 @@ h2 {
   border-bottom-color: var(--accent);
 }
 
-.save-controls {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 10px;
-}
-
-
-.trash-button {
-  border-color: var(--danger);
-  color: var(--danger);
-}
-
-.save-state {
-  min-width: 98px;
-  color: var(--text-muted);
-  font-size: 0.88rem;
-  text-align: right;
-}
-
-.save-state.dirty {
-  color: var(--warning);
-}
-
-.save-state.error {
-  color: var(--error);
-}
-
 .content-editor {
   flex: 1;
   width: 100%;
@@ -1499,17 +1461,65 @@ textarea:disabled {
 }
 
 .notes-editor {
-  min-height: 120px;
+  min-height: 170px;
   resize: vertical;
   line-height: 1.5;
 }
 
-.checkbox-label {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.info-status {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.info-status legend {
+  padding: 0;
+  margin-bottom: 6px;
   color: var(--text-secondary);
+  font-size: 0.9rem;
   font-weight: 700;
+}
+
+.info-status label {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 10px;
+  gap: 3px;
+}
+
+.info-status input { accent-color: var(--accent); }
+
+.info-favorite {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 1.5rem;
+  cursor: pointer;
+}
+
+.info-favorite[aria-pressed="true"] { color: var(--favorite); }
+.info-favorite:disabled { opacity: 0.72; cursor: not-allowed; }
+
+.info-counts, .info-footer {
+  display: flex;
+  gap: 12px;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.info-counts { overflow-x: auto; flex-shrink: 0; }
+.metadata-content > .field-label { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.metadata-header { gap: 2px; }
+.metadata-header h2 { margin: 0; }
+.metadata-pane { padding-inline: clamp(6px, 1vw, 18px); }
+
+.info-footer {
+  flex-wrap: wrap;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
 }
 
 .resize-handle {
@@ -1640,12 +1650,6 @@ textarea:disabled {
   .todo-toolbar-button {
     justify-self: start;
   }
-
-  .save-controls {
-    max-width: 100%;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
 }
 
 @container (max-width: 26rem) {
@@ -1655,6 +1659,12 @@ textarea:disabled {
       "query      query query   advanced advanced"
       "context    context context context context";
     grid-template-columns: auto auto minmax(0, 1fr) max-content 32px;
+  }
+
+  .editor-toolbar:not(.catalog-header):not(:has(.restore-button)) {
+    grid-template-areas:
+      "navigation todo heading heading metadata"
+      "query query query advanced advanced";
   }
 }
 

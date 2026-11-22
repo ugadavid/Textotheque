@@ -243,7 +243,7 @@ export default function DocumentCatalog({
           <span className="navigation-toggle-icon" aria-hidden="true" />
         </button>
         <button
-          className={isTodo ? 'todo-toolbar-button active' : 'todo-toolbar-button'}
+          className={isTodo ? 'secondary-button todo-toolbar-button active' : 'secondary-button todo-toolbar-button'}
           type="button"
           onClick={onOpenTodo}
           title="Ouvrir le TODO — Ctrl+Shift+T"
@@ -274,7 +274,7 @@ export default function DocumentCatalog({
         </div>
         <div className="advanced-search-actions">
           <button
-            className={searching ? 'advanced-search-button active' : 'advanced-search-button'}
+            className={searching ? 'primary-button advanced-search-button active' : 'primary-button advanced-search-button'}
             type="button"
             onClick={onAdvancedSearch}
             aria-pressed={searching}

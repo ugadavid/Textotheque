@@ -527,6 +527,14 @@ app
       throw new Error(`Initial load recovery failed: ${JSON.stringify(recoveryResult)}; console=${JSON.stringify(rendererConsoleMessages)}`);
     }
 
+    async function trashSelected() {
+      const selected = document.querySelector('.document-item.selected, .tree-document-button.selected');
+      selected.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      const action = [...document.querySelectorAll('.folder-context-menu button')].find(e => e.textContent === 'Mettre à la corbeille');
+      action.click();
+    }
+
     const result = await window.webContents.executeJavaScript(`
       (async () => {
         const expectedAppVersion = ${JSON.stringify(packageVersion)};
@@ -836,7 +844,7 @@ app
         Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(folderSelect, '1');
         folderSelect.dispatchEvent(new Event('change', { bubbles: true }));
         await waitFor(() => document.querySelector('.title-dirty-marker'), 'folder assignment marks document dirty');
-        document.querySelector('.primary-button').click();
+        dispatchShortcut('s', { ctrlKey: true });
         await waitFor(() => !document.querySelector('.title-dirty-marker'), 'folder assignment saved');
         document.querySelector('.navigation-home').click();
         await waitFor(() => document.querySelector('.folder-section'), 'navigation restored after all texts');
@@ -863,7 +871,7 @@ app
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
           .set.call(document.querySelector('.title-input'), 'Doc CtrlN dossier');
         document.querySelector('.title-input').dispatchEvent(new Event('input', { bubbles: true }));
-        document.querySelector('.primary-button').click();
+        dispatchShortcut('s', { ctrlKey: true });
         await waitFor(
           () => folderTreeText().includes('Doc CtrlN dossier'),
           'Ctrl+N folder document visible immediately in tree'
@@ -879,7 +887,7 @@ app
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
           .set.call(document.querySelector('.title-input'), 'Doc bouton dossier');
         document.querySelector('.title-input').dispatchEvent(new Event('input', { bubbles: true }));
-        document.querySelector('.primary-button').click();
+        dispatchShortcut('s', { ctrlKey: true });
         await waitFor(
           () => folderTreeText().includes('Doc bouton dossier'),
           'button plus folder document visible immediately in tree'
@@ -897,7 +905,7 @@ app
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
           .set.call(document.querySelector('.title-input'), 'Doc sous dossier');
         document.querySelector('.title-input').dispatchEvent(new Event('input', { bubbles: true }));
-        document.querySelector('.primary-button').click();
+        dispatchShortcut('s', { ctrlKey: true });
         await waitFor(
           () => folderTreeText().includes('Doc sous dossier'),
           'subfolder document visible in folder tree'
@@ -1127,13 +1135,13 @@ app
         targetEditor.dispatchEvent(new Event('input', { bubbles: true }));
         await waitFor(() => document.querySelector('.content-editor').value === 'Document cible modifie', 'target editor editable after confirm');
 
-        document.querySelector('.primary-button').click();
+        dispatchShortcut('s', { ctrlKey: true });
         await waitFor(() => !document.querySelector('.title-dirty-marker'), 'dirty marker cleared');
 
         Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')
           .set.call(document.querySelector('.content-editor'), 'Document cible non sauvegarde');
         document.querySelector('.content-editor').dispatchEvent(new Event('input', { bubbles: true }));
-        document.querySelector('.trash-button').click();
+        await (${trashSelected.toString()})();
         await waitFor(
           () => document.querySelector('.error-message')?.textContent.includes('Sauvegardez'),
           'dirty document trash guard visible'
@@ -1144,10 +1152,10 @@ app
         if (!document.querySelector('.title-input').value.includes('Deuxieme document')) {
           throw new Error('dirty trash guard changed selection');
         }
-        document.querySelector('.primary-button').click();
+        dispatchShortcut('s', { ctrlKey: true });
         await waitFor(() => !document.querySelector('.title-dirty-marker'), 'dirty document saved before trash');
 
-        document.querySelector('.trash-button').click();
+        await (${trashSelected.toString()})();
         await waitFor(() => document.querySelector('.confirm-dialog'), 'trash confirmation visible');
         document.querySelector('.confirm-dialog .danger-button').click();
         await waitFor(
@@ -1190,7 +1198,7 @@ app
         if (trashedEditor.value !== trashedContentBeforeTab || trashedTabEvent.defaultPrevented || !trashedTabDispatchResult) {
           throw new Error('Tab should not be intercepted in a read-only trashed document');
         }
-        document.querySelector('.primary-button').click();
+        document.querySelector('.restore-button').click();
         await waitFor(() => document.querySelector('.status-bar')?.textContent.includes('Tous les textes'), 'restored active status context');
         await waitFor(
           () => Array.from(document.querySelectorAll('.document-item')).some((item) => item.textContent.includes('Deuxieme document')),
@@ -1266,7 +1274,7 @@ app
         newTitleInput.dispatchEvent(new Event('input', { bubbles: true }));
         await waitFor(() => document.querySelector('.title-input').value === 'Titre saisi directement', 'direct title typing works');
         await waitFor(() => document.querySelector('.title-dirty-marker'), 'new title dirty marker visible');
-        document.querySelector('.primary-button').click();
+        dispatchShortcut('s', { ctrlKey: true });
         await waitFor(() => !document.querySelector('.title-dirty-marker'), 'new title saved');
 
         document.querySelector('.advanced-search-button').click();
@@ -1504,7 +1512,7 @@ app
         Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')
           .set.call(editor, 'Contenu refuse par SQLite');
         editor.dispatchEvent(new Event('input', { bubbles: true }));
-        document.querySelector('.primary-button').click();
+        window.dispatchEvent(new KeyboardEvent('keydown', {key: 's', ctrlKey: true, bubbles: true}));
         const message = await waitFor(
           () => {
             const text = document.querySelector('.error-message')?.textContent ?? '';
@@ -1512,14 +1520,14 @@ app
           },
           'save failure message'
         );
-        await waitFor(() => document.querySelector('.save-state.error'), 'save failure state');
+        await waitFor(() => document.querySelector('.status-bar')?.textContent.includes('Erreur'), 'save failure state');
         const persistedAfterFailure = (await window.textotheque.listDocuments()).find((item) => item.id === selectedId)?.content;
         const failureStateIsCorrect = Boolean(document.querySelector('.title-dirty-marker')) &&
           persistedAfterFailure === persistedBefore &&
           message.includes('Impossible de sauvegarder le document.') &&
           !message.includes('SQLITE_FORCED');
 
-        document.querySelector('.primary-button').click();
+        window.dispatchEvent(new KeyboardEvent('keydown', {key: 's', ctrlKey: true, bubbles: true}));
         await waitFor(() => !document.querySelector('.title-dirty-marker'), 'successful save after failure');
         await waitFor(() => !document.querySelector('.error-message'), 'old save error cleared');
         return {
@@ -1586,7 +1594,7 @@ app
           throw new Error('Timeout: ' + label);
         };
         const selectedId = Number(document.querySelector('.status-bar')?.textContent.match(/Document (\\d+)/)?.[1]);
-        document.querySelector('.trash-button').click();
+        await (${trashSelected.toString()})();
         const dialog = await waitFor(() => document.querySelector('.confirm-dialog'), 'trash failure confirmation');
         dialog.querySelector('.danger-button').click();
         const message = await waitFor(
@@ -1840,7 +1848,6 @@ app
         dialog.querySelector('.danger-button').click();
         await waitFor(() => document.querySelector('.title-input')?.value === 'TODO', 'lazy TODO creation');
         await waitFor(() => document.querySelector('.todo-toolbar-button')?.getAttribute('aria-pressed') === 'true', 'active TODO button');
-        if (document.querySelector('.trash-button')) throw new Error('trash action must be unavailable for TODO');
         const todoId = Number(document.querySelector('.status-bar')?.textContent.match(/Document (\\d+)/)?.[1]);
         const countAfterCreation = (await window.textotheque.listDocuments()).filter((item) => item.special_role === 'todo').length;
         if (countAfterCreation !== 1) throw new Error('lazy TODO creation did not produce exactly one document');

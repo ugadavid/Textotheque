@@ -78,11 +78,43 @@ async function checkWindow(win, phase, second) {
   const editorLayout = await geometry();
   const editorColor = () => read("getComputedStyle(document.querySelector('.content-editor')).backgroundColor");
   const lightColor = await editorColor();
+  const checkInfo = () => read(`(() => {
+    const pane = document.querySelector('.metadata-pane');
+    const toolbar = document.querySelector('.editor-toolbar');
+    const counts = [...pane.querySelectorAll('.info-counts span')];
+    return {
+      header: pane.querySelector('h2').textContent,
+      statuses: [...pane.querySelectorAll('[type=radio]')].map(e => [e.value, e.labels[0].textContent.trim()]),
+      dates: [...pane.querySelectorAll('dt')].map(e => e.textContent),
+      notesHeight: pane.querySelector('.notes-editor').offsetHeight,
+      countsInline: counts.length === 2 && counts[0].offsetTop === counts[1].offsetTop,
+      footer: pane.querySelector('.metadata-content').lastElementChild.textContent,
+      obsolete: Boolean(toolbar.querySelector('.save-controls, .save-state, .trash-button, [title="Sauvegarder - Ctrl+S"]')),
+      colors: ['.todo-toolbar-button', '.advanced-search-button'].map((selector, index) => {
+        const element = toolbar.querySelector(selector);
+        const css = getComputedStyle(element);
+        const probe = document.createElement('span');
+        element.append(probe);
+        probe.style.color = index ? 'var(--accent)' : 'var(--danger)';
+        const matches = getComputedStyle(probe).color === (index ? css.backgroundColor : css.borderTopColor);
+        probe.remove();
+        return matches;
+      }),
+    };
+  })()`);
+  const info = await checkInfo();
+  assert.equal(info.header, 'Info');
+  assert.deepEqual(info.statuses, [['draft','Brouillon'], ['active','Actif'], ['to_review','À revoir'], ['final','Final'], ['archived','Archivé']]);
+  assert.deepEqual(info.dates, ['Créé','Modifié','Dernière ouverture']);
+  assert.ok(info.notesHeight >= 160 && info.countsInline && !info.obsolete);
+  assert.match(info.footer, /ID : [0-9]+Format : plain/);
+  assert.deepEqual(info.colors, [true, true]);
   await capture('edition-light');
   await choose('dark');
   assert.deepEqual(await geometry(), editorLayout);
   assert.deepEqual(await position(), coordinates);
   assert.notEqual(await editorColor(), lightColor);
+  assert.deepEqual(await checkInfo(), info);
   await capture('edition-dark');
   const handleColor = () => read("getComputedStyle(document.querySelector('.left-resize-handle')).backgroundColor");
   const handlePoint = await read(`(() => {
@@ -101,7 +133,40 @@ async function checkWindow(win, phase, second) {
   assert.equal(await read("Boolean(document.querySelector('.title-dirty-marker'))"), false);
   assert.deepEqual(await snapshot(), before);
 
-  await click('.trash-button');
+  const docId = await read("Number(document.querySelector('.info-footer span').textContent.split(':')[1])");
+  await click('.info-favorite');
+  await has('.title-dirty-marker');
+  await click('.info-status input[value="to_review"]');
+  await read(`(() => {
+    const notes = document.querySelector('.notes-editor');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(notes, 'Note fictive 058');
+    notes.dispatchEvent(new Event('input', {bubbles:true}));
+    const folder = document.querySelector('.metadata-content select');
+    folder.value = '';
+    folder.dispatchEvent(new Event('change', {bubbles:true}));
+  })()`);
+  await wait(() => read(`window.textotheque.getDocument(${docId}).then(d =>
+    d.notes === 'Note fictive 058' && d.status === 'to_review' && d.folder_id === null && d.favorite === 0)`), 'Autosave Info');
+  await has('.info-favorite[title="Ajouter aux favoris"]');
+  await click('.info-favorite');
+  await has('.title-dirty-marker');
+  win.webContents.sendInputEvent({type: 'keyDown', keyCode: 'S', modifiers: ['control']});
+  win.webContents.sendInputEvent({type: 'keyUp', keyCode: 'S', modifiers: ['control']});
+  await wait(() => read(`window.textotheque.getDocument(${docId}).then(d => d.favorite === 1)`), 'Ctrl+S favori');
+  await has('.info-favorite[aria-pressed="true"][title="Retirer des favoris"]');
+  const narrowLayout = await read(`(() => {
+    const pane = document.querySelector('.metadata-pane');
+    const shell = pane.parentElement;
+    const prior = shell.style.getPropertyValue('--right-pane-track');
+    shell.style.setProperty('--right-pane-track', '150px');
+    const content = pane.querySelector('.metadata-content');
+    const counts = [...pane.querySelectorAll('.info-counts span')];
+    const fits = content.scrollWidth <= content.clientWidth + 1 && counts[0].offsetTop === counts[1].offsetTop;
+    shell.style.setProperty('--right-pane-track', prior);
+    return fits;
+  })()`);
+  assert.ok(narrowLayout, 'Volet Info étroit');
+  menu().getMenuItemById('edit-trash').click();
   await has('.confirm-dialog');
   const dialogLayout = await geometry();
   await capture('dialogue-light');
@@ -135,10 +200,16 @@ async function checkWindow(win, phase, second) {
   await click('.nav-view-button:nth-child(2)');
   await has('.content-editor:disabled');
   await has('.empty-trash-button');
+  await has('.restore-button');
+  assert.equal(await read("Array.from(document.querySelectorAll('.metadata-pane input, .metadata-pane button, .metadata-pane select, .metadata-pane textarea, .title-input, .content-editor')).every(e => e.matches(':disabled'))"), true);
   await capture('corbeille-dark');
+  await click('.restore-button');
+  await has('.content-editor:enabled');
   win.webContents.send('library:menu-action', {action: 'known', path: second});
   await wait(() => read("document.querySelector('.library-name')?.textContent.includes('seconde.sqlite')"), 'Bascule bibliothèque');
   await checkTheme('dark');
+  await has('.metadata-pane .empty-state');
+  assert.equal(await read("Boolean(document.querySelector('.metadata-pane :is(button, input, select, textarea)'))"), false);
 }
 
 async function runWindow(temp, phase) {

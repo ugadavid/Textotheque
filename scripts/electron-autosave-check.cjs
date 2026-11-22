@@ -33,6 +33,10 @@ function persistDocument(id, input) {
 
 app.whenReady().then(async () => {
   ipcMain.handle('library:get-info', () => ({ ...libraryInfo }));
+  ipcMain.handle('saved-searches:list', () => []);
+  for (const channel of ['view:set-theme', 'view:set-explorer-order', 'search:set-menu-state', 'edit:set-target']) {
+    ipcMain.handle(channel, () => undefined);
+  }
   ipcMain.handle('file:set-export-available', () => undefined);
   ipcMain.handle('file:export-text', () => ({ canceled: true, fileName: null }));
   ipcMain.handle('library:get-startup-notice', () => null);
@@ -259,7 +263,7 @@ app.whenReady().then(async () => {
     await window.webContents.executeJavaScript(`(async () => {
       ${setup}
       setEditor('Snapshot A en vol');
-      await waitFor(() => document.querySelector('.save-state.saving'), 'snapshot A in flight');
+      await waitFor(() => document.querySelector('.status-bar')?.textContent.includes('Sauvegarde...'), 'snapshot A in flight');
     })()`);
     await window.webContents.executeJavaScript(`(async () => {
       ${setup}
@@ -284,7 +288,7 @@ app.whenReady().then(async () => {
     const failureResult = await window.webContents.executeJavaScript(`(async () => {
       ${setup}
       setEditor('Contenu conserve apres erreur');
-      await waitFor(() => document.querySelector('.save-state.error'), 'autosave error');
+      await waitFor(() => document.querySelector('.error-message'), 'autosave error');
       await new Promise((resolve) => setTimeout(resolve, 1800));
       return {
         dirty: Boolean(document.querySelector('.title-dirty-marker')),
@@ -305,7 +309,7 @@ app.whenReady().then(async () => {
     await window.webContents.executeJavaScript(`(async () => {
       ${setup}
       setEditor('Retour tardif ancien document');
-      await waitFor(() => document.querySelector('.save-state.saving'), 'old document save in flight');
+      await waitFor(() => document.querySelector('.status-bar')?.textContent.includes('Sauvegarde...'), 'old document save in flight');
       const second = Array.from(document.querySelectorAll('.document-item')).find((item) => item.textContent.includes('Deuxieme document'));
       second.click();
       const dialog = await waitFor(() => document.querySelector('.confirm-dialog'), 'document switch confirmation');
@@ -331,7 +335,7 @@ app.whenReady().then(async () => {
     await window.webContents.executeJavaScript(`(async () => {
       ${setup}
       setEditor('Ancienne bibliotheque en vol');
-      await waitFor(() => document.querySelector('.save-state.saving'), 'old library save in flight');
+      await waitFor(() => document.querySelector('.status-bar')?.textContent.includes('Sauvegarde...'), 'old library save in flight');
     })()`);
     const librarySwitchCallCount = updateCalls.length;
     window.webContents.send('library:menu-action', { action: 'known', path: libraryB });

@@ -2057,7 +2057,6 @@ export default function App() {
           document={selectedDocument}
           title={title}
           content={content}
-          saveState={displayedSaveState}
           isDirty={isDirty}
           error={error}
           notice={libraryNotice}
@@ -2081,8 +2080,6 @@ export default function App() {
           onOpenAdvancedSearch={showAdvancedSearch}
           onSearchChange={handleSearchChange}
           onClearSearch={clearSearchAndReturnToNavigation}
-          onSave={handleSave}
-          onTrash={() => void handleTrashCurrentDocument()}
           onRestore={() => void handleRestoreCurrentDocument()}
         />}
         {paneLayout.rightVisible ? <button

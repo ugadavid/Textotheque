@@ -16,7 +16,9 @@ interface MetadataPaneProps {
   onFolderChange: (value: number | null) => void;
 }
 
-const statuses: DocumentStatus[] = ['draft', 'active', 'to_review', 'final', 'archived'];
+const statuses: ReadonlyArray<[DocumentStatus, string]> = [
+  ['draft', 'Brouillon'], ['active', 'Actif'], ['to_review', 'À revoir'], ['final', 'Final'], ['archived', 'Archivé'],
+];
 
 function formatDate(value: string | null): string {
   if (!value) {
@@ -62,46 +64,24 @@ export default function MetadataPane({
   return (
     <aside className="pane metadata-pane">
       <div className="pane-header metadata-header">
-        <div>
-          <p className="eyebrow">Document</p>
-          <h2>Metadonnees</h2>
-        </div>
+        <h2>Info</h2>
+        {document && <button type="button" className="info-favorite" aria-pressed={favorite}
+          aria-label={favorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+          title={favorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}
+          onClick={() => onFavoriteChange(!favorite)} disabled={isDeleted}>{favorite ? '★' : '☆'}</button>}
       </div>
 
       {!document ? (
         <p className="empty-state">Selectionnez un texte pour afficher ses informations.</p>
       ) : (
         <div className="metadata-content">
-          <dl className="metadata-list">
-            <div>
-              <dt>ID</dt>
-              <dd>{document.id}</dd>
-            </div>
-            <div>
-              <dt>Format</dt>
-              <dd>{document.content_format}</dd>
-            </div>
-            <div>
-              <dt>Cree</dt>
-              <dd>{formatDate(document.created_at)}</dd>
-            </div>
-            <div>
-              <dt>Modifie</dt>
-              <dd>{formatDate(document.updated_at)}</dd>
-            </div>
-            <div>
-              <dt>Derniere ouverture</dt>
-              <dd>{formatDate(document.last_opened_at)}</dd>
-            </div>
-            <div>
-              <dt>Caracteres</dt>
-              <dd>{characterCount}</dd>
-            </div>
-            <div>
-              <dt>Mots</dt>
-              <dd>{wordCount}</dd>
-            </div>
-          </dl>
+          <fieldset className="info-status" disabled={isDeleted}>
+            <legend>Statut</legend>
+            {statuses.map(([value, label]) => (
+              <label key={value}><input type="radio" name="document-status" value={value}
+                checked={status === value} onChange={() => onStatusChange(value)} /> {label}</label>
+            ))}
+          </fieldset>
 
           <label className="field-label">
             Dossier
@@ -110,38 +90,13 @@ export default function MetadataPane({
               onChange={(event) => onFolderChange(event.target.value === '' ? null : Number(event.target.value))}
               disabled={isDeleted}
             >
-              <option value="">Non classe</option>
+              <option value="">Non classé</option>
               {folders.map((folder) => (
                 <option key={folder.id} value={folder.id}>
                   {folderLabel(folder, folders)}
                 </option>
               ))}
             </select>
-          </label>
-
-          <label className="field-label">
-            Statut
-            <select
-              value={status}
-              onChange={(event) => onStatusChange(event.target.value as DocumentStatus)}
-              disabled={isDeleted}
-            >
-              {statuses.map((statusOption) => (
-                <option key={statusOption} value={statusOption}>
-                  {statusOption}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={favorite}
-              onChange={(event) => onFavoriteChange(event.target.checked)}
-              disabled={isDeleted}
-            />
-            Favori
           </label>
 
           <label className="field-label">
@@ -154,6 +109,14 @@ export default function MetadataPane({
               disabled={isDeleted}
             />
           </label>
+
+          <dl className="metadata-list">
+            <div><dt>Créé</dt><dd>{formatDate(document.created_at)}</dd></div>
+            <div><dt>Modifié</dt><dd>{formatDate(document.updated_at)}</dd></div>
+            <div><dt>Dernière ouverture</dt><dd>{formatDate(document.last_opened_at)}</dd></div>
+          </dl>
+          <div className="info-counts"><span>Caractères : {characterCount}</span><span>Mots : {wordCount}</span></div>
+          <footer className="info-footer"><span>ID : {document.id}</span><span>Format : {document.content_format}</span></footer>
         </div>
       )}
     </aside>

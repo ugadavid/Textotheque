@@ -10,7 +10,6 @@ interface EditorPaneProps {
   document: TextDocument | null;
   title: string;
   content: string;
-  saveState: 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
   isDirty: boolean;
   error: string | null;
   notice: string | null;
@@ -28,18 +27,8 @@ interface EditorPaneProps {
   onToggleMetadata: () => void;
   onOpenTodo: () => void;
   onOpenAdvancedSearch: () => void;
-  onSave: () => void;
-  onTrash: () => void;
   onRestore: () => void;
 }
-
-const saveLabels = {
-  idle: 'Pret',
-  dirty: 'Modifie',
-  saving: 'Sauvegarde...',
-  saved: 'Sauvegarde',
-  error: 'Erreur',
-};
 
 interface ContentEditorProps extends Pick<EditorPaneProps, 'positions' | 'libraryPath' | 'capturePositionRef' | 'insertTextRef' | 'content' | 'isDeleted' | 'onContentChange'> {
   documentId: number;
@@ -140,7 +129,6 @@ export default function EditorPane({
   document,
   title,
   content,
-  saveState,
   isDirty,
   error,
   notice,
@@ -158,8 +146,6 @@ export default function EditorPane({
   onToggleMetadata,
   onOpenTodo,
   onOpenAdvancedSearch,
-  onSave,
-  onTrash,
   onRestore,
 }: EditorPaneProps) {
   return (
@@ -176,7 +162,7 @@ export default function EditorPane({
           <span className="navigation-toggle-icon" aria-hidden="true" />
         </button>
         <button
-          className={isTodo ? 'todo-toolbar-button active' : 'todo-toolbar-button'}
+          className={isTodo ? 'secondary-button todo-toolbar-button active' : 'secondary-button todo-toolbar-button'}
           type="button"
           onClick={onOpenTodo}
           title="Ouvrir le TODO — Ctrl+Shift+T"
@@ -212,37 +198,15 @@ export default function EditorPane({
           {searchQuery.trim() ? <button className="clear-search-button" type="button" onClick={onClearSearch} title="Vider la recherche" aria-label="Vider la recherche">×</button> : null}
         </div>
         <button
-          className={advancedSearchActive ? 'advanced-search-button active' : 'advanced-search-button'}
+          className={advancedSearchActive ? 'primary-button advanced-search-button active' : 'primary-button advanced-search-button'}
           type="button"
           onClick={onOpenAdvancedSearch}
         >
           Recherche avancée
         </button>
-        <div className="save-controls">
-          {document ? <>
-            <span className={`save-state ${saveState}`}>{saveLabels[saveState]}</span>
-            {isDeleted ? (
-              <button className="primary-button" type="button" onClick={onRestore}>
-                Restaurer
-              </button>
-            ) : (
-              <>
-                {!isTodo ? <button className="secondary-button trash-button" type="button" onClick={onTrash}>
-                  Corbeille
-                </button> : null}
-                <button
-                  className="primary-button"
-                  type="button"
-                  onClick={onSave}
-                  disabled={saveState === 'saving'}
-                  title="Sauvegarder - Ctrl+S"
-                >
-                  Sauvegarder
-                </button>
-              </>
-            )}
-          </> : null}
-        </div>
+        {document && isDeleted && (
+          <button className="primary-button restore-button" type="button" onClick={onRestore}>Restaurer</button>
+        )}
         <button
           className={metadataVisible ? 'pane-toggle-button toggle-metadata-button active' : 'pane-toggle-button toggle-metadata-button'}
           type="button"

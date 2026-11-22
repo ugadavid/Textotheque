@@ -187,7 +187,7 @@ async function check(win, phase, first, second) {
   await until(async () => (await names()).includes('Branche'), 'Renommage manuel validé par Entrée');
   assert.deepEqual(await names(), manual.map(n => n === 'Églantine' ? 'Branche' : n));
   assert.equal(await read("document.querySelector('.content-editor').value"), draft);
-  await click('[title="Sauvegarder - Ctrl+S"]');
+  await read("window.dispatchEvent(new KeyboardEvent('keydown', {key:'s', ctrlKey:true, bubbles:true}))");
   await until(async () => !await exists('.title-dirty-marker'), 'Sauvegarde du brouillon');
   assert.equal(await read("window.textotheque.listDocuments().then(rows => rows.find(d => d.title === 'Carnet 10' && d.folder_id !== null).content)"), draft);
 
@@ -217,7 +217,7 @@ async function check(win, phase, first, second) {
     })()`);
   }
   await input('.title-input', 'Zinnia');
-  await click('[title="Sauvegarder - Ctrl+S"]');
+  await read("window.dispatchEvent(new KeyboardEvent('keydown', {key:'s', ctrlKey:true, bubbles:true}))");
   await until(async () => (await docs(rootDocs)).at(-1) === 'Zinnia', 'Titre renommé');
   await openMenu('Zéphyr');
   await capture('alphabetique-sombre', '050');
@@ -297,10 +297,10 @@ async function check(win, phase, first, second) {
     assert.equal(await exists('.confirm-dialog'), false);
   }
   await refuseOccupiedFolder();
-  await click('.trash-button');
+  item('edit-trash').click();
   await until(() => exists('.confirm-dialog .danger-button'), 'Corbeille depuis l’éditeur');
   await click('.confirm-dialog .danger-button');
-  await until(() => read("document.querySelector('.trash-button') === null"), 'Éditeur vide');
+  await until(() => read("document.querySelector('.content-editor') === null"), 'Éditeur vide');
   const trashed = await read('window.textotheque.listDeletedDocuments().then(rows => rows[0])');
   await read(folderButton('Nouveau dossier') + '.click()');
   await editState(['rename', 'delete-folder']);
@@ -329,7 +329,7 @@ async function check(win, phase, first, second) {
   await until(async () => (await docs(unfiled)).includes(trashed.title), 'Document restauré visible dans Non classés');
   await read(`[...document.querySelectorAll('.unfiled-tree-section .tree-document-button')].find(e => e.textContent === ${JSON.stringify(trashed.title)}).click()`);
   await editState(['rename', 'trash']);
-  await click('.trash-button');
+  item('edit-trash').click();
   await until(() => exists('.confirm-dialog .danger-button'), 'Nouvelle mise en corbeille');
   await click('.confirm-dialog .danger-button');
   await until(() => read('window.textotheque.listDeletedDocuments().then(rows => rows.length === 1)'), 'Document supprimé');
