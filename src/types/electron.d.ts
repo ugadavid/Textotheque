@@ -1,3 +1,4 @@
+import type { EditAction, EditTarget } from './edit-menu';
 import type { DocumentInput, Folder, SpecialDocumentRole, TextDocument } from './document';
 import type { ExplorerOrder } from '../services/explorer-order';
 import type { CatalogDocument, DocumentCatalogOptions } from './catalog';
@@ -40,6 +41,9 @@ declare global {
       listDeletedDocuments: () => Promise<TextDocument[]>;
       listFolders: () => Promise<Folder[]>;
       createFolder: (parentId: number | null) => Promise<Folder>;
+      deleteEmptyFolder: (id: number, libraryPath: string) => Promise<void>;
+      setEditTarget: (target: EditTarget) => Promise<void>;
+      onEditAction: (callback: (action: EditAction) => void) => () => void;
       renameFolder: (id: number, name: string) => Promise<Folder>;
       createDocument: (folderId?: number | null) => Promise<TextDocument>;
       getOrCreateSpecialDocument: (role: SpecialDocumentRole) => Promise<TextDocument>;

@@ -19,6 +19,7 @@ import StatusBar from './components/StatusBar';
 import {
   createFolder,
   createDocument,
+  deleteEmptyFolder,
   emptyTrash,
   getDocument,
   getOrCreateSpecialDocument,
@@ -69,6 +70,8 @@ import type {
   SearchDocumentsOptions,
 } from './types/search';
 import type { SavedSearchDefinition, SavedSearchSummary, SearchMenuAction } from './types/saved-search';
+
+import type { EditTarget } from './types/edit-menu';
 
 type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
 type LibraryBackupState = 'idle' | 'saving' | 'success';
@@ -237,6 +240,8 @@ export default function App() {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [documentView, setDocumentView] = useState<DocumentView>('navigation');
   const [selectedFolderId, setSelectedFolderId] = useState<number | null>(null);
+  const [branchSelected, setBranchSelected] = useState(false);
+  const [editingFolderId, setEditingFolderId] = useState<number | null>(null);
   const [selectedDocument, setSelectedDocument] = useState<TextDocument | null>(null);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
@@ -729,6 +734,7 @@ export default function App() {
 
   function applyDocument(document: TextDocument) {
     invalidateEditorContext();
+    setBranchSelected(false);
     setSelectedDocument(document);
     setTitle(titleForEditing(document.title));
     setContent(document.content);
@@ -786,6 +792,7 @@ export default function App() {
   async function handleChangeDocumentView(nextView: DocumentView, nextFolderId: number | null = null) {
     clearSavedSearchAssociation();
     if (nextView === 'all') {
+      setBranchSelected(false);
       if (catalogVisible && documentView === 'all') return;
       hideSearchResults();
       setDocumentView('all');
@@ -797,6 +804,7 @@ export default function App() {
     }
 
     if (nextView === documentView && nextFolderId === selectedFolderId && !catalogVisible && !searchResultsVisible) {
+      setBranchSelected(nextView === 'folder' || nextView === 'unfiled');
       return;
     }
 
@@ -807,6 +815,7 @@ export default function App() {
     setError(null);
     try {
       await refreshDocuments(undefined, nextView, nextFolderId);
+      setBranchSelected(nextView === 'folder' || nextView === 'unfiled');
       setDocumentView(nextView);
       setSelectedFolderId(nextFolderId);
       setCatalogVisible(false);
@@ -910,6 +919,7 @@ export default function App() {
 
     try {
       await refreshDocuments(undefined, 'folder', folder.id);
+      setBranchSelected(true);
       setDocumentView('folder');
       setSelectedFolderId(folder.id);
       setCatalogVisible(false);
@@ -935,12 +945,48 @@ export default function App() {
     }
   }
 
+  async function handleDeleteFolder(folder: Folder) {
+    const path = libraryInfo?.path;
+    if (!path) return;
+    if (folders.some(child => child.parent_id === folder.id) ||
+        documents.some(doc => doc.folder_id === folder.id) ||
+        deletedDocuments.some(doc => doc.folder_id === folder.id)) {
+      setError('Le dossier doit être vide avant d’être supprimé.');
+      return;
+    }
+    if (!(await confirmAction({
+      title: 'Supprimer le dossier', message: `Supprimer définitivement le dossier « ${folder.name} » ?`,
+      confirmLabel: 'Supprimer', danger: true,
+    }))) return;
+    try {
+      await deleteEmptyFolder(folder.id, path);
+      if (activeLibraryPathRef.current !== path) return;
+      setFolders(current => current.filter(item => item.id !== folder.id));
+      if (selectedFolderId === folder.id) {
+        setBranchSelected(false);
+        setSelectedFolderId(null);
+        setDocumentView('navigation');
+      }
+      setError(null);
+    } catch (failure) {
+      showOperationError('delete-folder', failure, 'Impossible de supprimer le dossier.');
+    }
+  }
+
+  async function handleDocumentAction(doc: TextDocument, view: DocumentView, action: 'rename' | 'trash' | 'restore') {
+    if (!(await handleSelectDocument(doc.id, view, view === 'folder' ? doc.folder_id : null))) return;
+    if (action === 'rename' && !doc.deleted_at) focusTitle();
+    if (action === 'trash') await handleTrashCurrentDocument(doc, view, doc.folder_id);
+    if (action === 'restore') await handleRestoreCurrentDocument(doc);
+  }
+
   async function handleSelectDocument(
     id: number,
     nextView?: DocumentView,
     nextFolderId?: number | null
   ): Promise<boolean> {
     if (id === selectedDocument?.id) {
+      setBranchSelected(false);
       if (nextView) {
         setDocumentView(nextView);
         setSelectedFolderId(nextFolderId ?? null);
@@ -1146,6 +1192,8 @@ export default function App() {
     setSavedSearchNameDialog(null);
     setDeletedDocuments([]);
     setFolders([]);
+    setBranchSelected(false);
+    setEditingFolderId(null);
     setDocumentView('navigation');
     setSelectedFolderId(null);
     setSelectedDocument(null);
@@ -1324,16 +1372,46 @@ export default function App() {
     if (menuAction.action === 'open') void handleOpenSavedSearch(menuAction.id);
   }));
 
-  async function handleTrashCurrentDocument() {
-    if (!selectedDocument || selectedDocumentIsDeleted) {
+  const listVisible = catalogVisible || searchResultsVisible;
+  const explorerDocument = !listVisible && !branchSelected ? selectedDocument : null;
+  function currentEditTarget(): EditTarget {
+    if (explorerDocument?.deleted_at) return 'deleted';
+    if (explorerDocument?.special_role === 'todo') return 'todo';
+    if (explorerDocument) return 'document';
+    if (!listVisible && branchSelected && documentView === 'folder' && selectedFolder) return 'folder';
+    return 'none';
+  }
+  const editTarget = confirmDialog || savedSearchNameDialog || libraryOpenState !== 'idle' ? 'none' : currentEditTarget();
+  useEffect(() => {
+    void window.textotheque.setEditTarget(editTarget).catch(error => logRendererError('edit-menu', error));
+  }, [editTarget]);
+  useEffect(() => window.textotheque.onEditAction(action => {
+    if (editTarget === 'folder' && selectedFolder) {
+      if (action === 'rename') {
+        setPaneLayout(current => ({ ...current, leftVisible: true }));
+        setEditingFolderId(selectedFolder.id);
+      }
+      if (action === 'delete-folder') void handleDeleteFolder(selectedFolder);
+    } else if (editTarget === 'document' || editTarget === 'todo') {
+      if (action === 'rename') focusTitle();
+      if (action === 'trash' && editTarget === 'document') void handleTrashCurrentDocument();
+    } else if (editTarget === 'deleted' && action === 'restore') {
+      void handleRestoreCurrentDocument();
+    }
+  }));
+
+  async function handleTrashCurrentDocument(
+    target = selectedDocument, view = documentView, contextFolderId = selectedFolderId
+  ) {
+    if (!target || target.deleted_at) {
       return;
     }
-    if (selectedDocumentIsTodo) {
+    if (target.special_role === 'todo') {
       setError('Le TODO est un document permanent et ne peut pas être placé dans la corbeille.');
       return;
     }
 
-    if (isDirty) {
+    if (target.id === selectedDocument?.id && isDirty) {
       setError('Sauvegardez ou annulez les modifications avant de deplacer ce document vers la corbeille.');
       focusEditor();
       return;
@@ -1345,28 +1423,28 @@ export default function App() {
 
     setError(null);
     try {
-      await trashDocument(selectedDocument.id);
+      await trashDocument(target.id);
     } catch (trashError: unknown) {
       showOperationError('trash-document', trashError, 'Impossible de deplacer le document vers la corbeille.');
       return;
     }
 
     try {
-      await refreshDocuments(undefined, 'all', null);
+      await refreshDocuments(undefined, view, contextFolderId);
     } catch (loadError: unknown) {
       showOperationError('refresh-after-trash-document', loadError, 'Document deplace, mais actualisation impossible.');
     }
   }
 
-  async function handleRestoreCurrentDocument() {
-    if (!selectedDocument || !selectedDocumentIsDeleted) {
+  async function handleRestoreCurrentDocument(target = selectedDocument) {
+    if (!target?.deleted_at) {
       return;
     }
 
     setError(null);
     let restored: TextDocument;
     try {
-      restored = await restoreDocument(selectedDocument.id);
+      restored = await restoreDocument(target.id);
     } catch (restoreError: unknown) {
       showOperationError('restore-document', restoreError, 'Impossible de restaurer le document.');
       return;
@@ -1410,6 +1488,7 @@ export default function App() {
   }
 
   function clearSearchAndReturnToNavigation() {
+    setBranchSelected(false);
     clearSavedSearchAssociation();
     hideSearchResults();
     setSearchQuery('');
@@ -1899,7 +1978,12 @@ export default function App() {
           unfiledCount={unfiledCount}
           folderDocumentCounts={folderDocumentCounts}
           trashCount={deletedDocuments.length}
-          selectedDocumentId={selectedDocument?.id ?? null}
+          selectedDocumentId={explorerDocument?.id ?? null}
+          branchSelected={branchSelected && !listVisible}
+          editingFolderId={editingFolderId}
+          onEditFolder={setEditingFolderId}
+          onDeleteFolder={handleDeleteFolder}
+          onDocumentAction={handleDocumentAction}
           dirtyDocumentId={isDirty ? selectedDocument?.id ?? null : null}
           onViewChange={handleChangeDocumentView}
           onCreateDocument={handleCreateDocument}
@@ -1998,8 +2082,8 @@ export default function App() {
           onSearchChange={handleSearchChange}
           onClearSearch={clearSearchAndReturnToNavigation}
           onSave={handleSave}
-          onTrash={handleTrashCurrentDocument}
-          onRestore={handleRestoreCurrentDocument}
+          onTrash={() => void handleTrashCurrentDocument()}
+          onRestore={() => void handleRestoreCurrentDocument()}
         />}
         {paneLayout.rightVisible ? <button
           className="resize-handle right-resize-handle"

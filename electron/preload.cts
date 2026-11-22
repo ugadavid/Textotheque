@@ -1,3 +1,4 @@
+import type { EditAction, EditTarget } from '../src/types/edit-menu.js';
 import type {
   CatalogDocument,
   DocumentCatalogOptions,
@@ -83,6 +84,13 @@ const api = {
   listDeletedDocuments: (): Promise<TextDocument[]> => ipcRenderer.invoke('documents:list-deleted'),
   listFolders: (): Promise<Folder[]> => ipcRenderer.invoke('folders:list'),
   createFolder: (parentId: number | null): Promise<Folder> => ipcRenderer.invoke('folders:create', parentId),
+  deleteEmptyFolder: (id: number, libraryPath: string): Promise<void> => ipcRenderer.invoke('folders:delete-empty', id, libraryPath),
+  setEditTarget: (target: EditTarget): Promise<void> => ipcRenderer.invoke('edit:set-target', target),
+  onEditAction: (callback: (action: EditAction) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, action: EditAction) => callback(action);
+    ipcRenderer.on('edit:action', listener);
+    return () => ipcRenderer.removeListener('edit:action', listener);
+  },
   renameFolder: (id: number, name: string): Promise<Folder> => ipcRenderer.invoke('folders:rename', id, name),
   createDocument: (folderId: number | null = null): Promise<TextDocument> =>
     ipcRenderer.invoke('documents:create', folderId),

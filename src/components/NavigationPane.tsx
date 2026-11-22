@@ -6,6 +6,9 @@ const EXPANDED_FOLDERS_KEY = 'textotheque:expanded-folders:v2';
 const collator = new Intl.Collator('fr', { sensitivity: 'base', numeric: true });
 type DocumentView = 'navigation' | 'all' | 'unfiled' | 'folder' | 'trash';
 
+type DocumentAction = 'rename' | 'trash' | 'restore';
+type MenuTarget = { folder: Folder } | { doc: TextDocument; view: DocumentView };
+
 interface NavigationPaneProps {
   explorerOrder: ExplorerOrder;
   allDocuments: TextDocument[];
@@ -24,6 +27,11 @@ interface NavigationPaneProps {
   onCreateFolder: (parentId: number | null) => void;
   onRenameFolder: (id: number, name: string) => void;
   onSelectDocument: (id: number, view?: DocumentView, folderId?: number | null) => void;
+  editingFolderId: number | null;
+  onEditFolder: (id: number | null) => void;
+  onDeleteFolder: (folder: Folder) => void;
+  onDocumentAction: (doc: TextDocument, view: DocumentView, action: DocumentAction) => void;
+  branchSelected: boolean;
   onEmptyTrash: () => void;
 }
 
@@ -88,11 +96,19 @@ export default function NavigationPane(props: NavigationPaneProps) {
     selectedDocumentId, dirtyDocumentId, onViewChange, onCreateDocument, onCreateFolder,
     onRenameFolder, onSelectDocument, onEmptyTrash,
   } = props;
-  const [editingFolderId, setEditingFolderId] = useState<number | null>(null);
-  const [editingFolderName, setEditingFolderName] = useState('');
+  const { editingFolderId, onEditFolder } = props;
   const [folderMenu, setFolderMenu] = useState<{
-    folderId: number; x: number; y: number; trigger: HTMLButtonElement;
+    target: MenuTarget; x: number; y: number; trigger: HTMLButtonElement;
   } | null>(null);
+
+  function openMenu(event: MouseEvent<HTMLButtonElement>, target: MenuTarget) {
+    event.preventDefault();
+    const trigger = event.currentTarget;
+    const rect = trigger.getBoundingClientRect();
+    const keyboard = event.clientX === 0 && event.clientY === 0;
+    setFolderMenu({ target, trigger, x: keyboard ? rect.left : event.clientX, y: keyboard ? rect.bottom : event.clientY });
+  }
+
   const [expandedFolderIds, setExpandedFolderIds] = useState<Set<number>>(loadExpandedFolderIds);
   const [isUnfiledExpanded, setIsUnfiledExpanded] = useState(false);
   const isNavigationMode = ['navigation', 'folder', 'unfiled'].includes(currentView);
@@ -150,6 +166,13 @@ export default function NavigationPane(props: NavigationPaneProps) {
     });
   }, [currentView, folders, isNavigationMode, selectedDocumentId, selectedFolderId, treeDocuments]);
 
+  useEffect(() => {
+    if (editingFolderId === null) return;
+    const ancestors = folderAncestorIds(folders, editingFolderId);
+    setExpandedFolderIds(current => ancestors.every(id => current.has(id))
+      ? current : new Set([...current, ...ancestors]));
+  }, [editingFolderId, folders]);
+
   function toggleFolder(folderId: number) {
     setExpandedFolderIds((current) => {
       const next = new Set(current);
@@ -169,7 +192,7 @@ export default function NavigationPane(props: NavigationPaneProps) {
     </>;
   }
 
-  function simpleList(source: TextDocument[], label: string, empty: string, view?: DocumentView) {
+  function simpleList(source: TextDocument[], label: string, empty: string, view: DocumentView) {
     return <section className="navigation-mode" aria-label={label}>
       <div className="navigation-mode-header"><span>{label}</span><strong>{source.length}</strong></div>
       {source.length === 0 ? <p className="empty-state">{empty}</p> : <div className="document-list">
@@ -177,6 +200,7 @@ export default function NavigationPane(props: NavigationPaneProps) {
           className={document.id === selectedDocumentId ? 'document-item selected' : 'document-item'}
           key={document.id}
           type="button"
+          onContextMenu={event => openMenu(event, { doc: document, view })}
           onClick={() => onSelectDocument(document.id, view, null)}
         >
           <span className="document-title"><span className="document-icon" aria-hidden="true" />{markers(document)}{displayTitle(document)}</span>
@@ -184,6 +208,14 @@ export default function NavigationPane(props: NavigationPaneProps) {
         </button>)}
       </div>}
     </section>;
+  }
+
+  const target = folderMenu?.target;
+  function menuButton(label: string, action: () => void, first = false) {
+    return <button type="button" role="menuitem" autoFocus={first} onClick={() => {
+      setFolderMenu(null);
+      action();
+    }}>{label}</button>;
   }
 
   return <aside className="pane navigation-pane">
@@ -221,51 +253,27 @@ export default function NavigationPane(props: NavigationPaneProps) {
           </div></div>
           {folderRows.length === 0 ? <p className="folder-empty">Aucun dossier.</p> : <div className="folder-list">
             {folderRows.map((folder) => {
-              const isSelected = currentView === 'folder' && selectedFolderId === folder.id;
+              const isSelected = props.branchSelected && currentView === 'folder' && selectedFolderId === folder.id;
               const isExpanded = expandedFolderIds.has(folder.id);
               const folderDocuments = isExpanded ? documentsByFolder.get(folder.id) ?? [] : [];
-              function openFolderMenu(event: MouseEvent<HTMLButtonElement>) {
-                event.preventDefault();
-                const trigger = event.currentTarget;
-                const rect = trigger.getBoundingClientRect();
-                const keyboard = event.clientX === 0 && event.clientY === 0;
-                setFolderMenu({ folderId: folder.id, trigger,
-                  x: keyboard ? rect.left : event.clientX, y: keyboard ? rect.bottom : event.clientY });
-              }
-              const startRename = () => { setFolderMenu(null); setEditingFolderId(folder.id); setEditingFolderName(folder.name); };
-              const commitRename = (name = editingFolderName) => { onRenameFolder(folder.id, name); setEditingFolderId(null); setEditingFolderName(''); };
+              const openFolderMenu = (event: MouseEvent<HTMLButtonElement>) => openMenu(event, { folder });
+              const startRename = () => onEditFolder(folder.id);
+              const commitRename = (name: string) => { onRenameFolder(folder.id, name); onEditFolder(null); };
               return <div className="folder-row" key={folder.id}>
                 {editingFolderId === folder.id ? <input
-                  className="folder-name-input" value={editingFolderName} autoFocus style={{ marginLeft: `${folder.depth * 18}px` }}
-                  onChange={(event) => setEditingFolderName(event.target.value)} onBlur={(event) => commitRename(event.currentTarget.value)}
-                  onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { setEditingFolderId(null); setEditingFolderName(''); } }}
+                  className="folder-name-input" defaultValue={folder.name} autoFocus style={{ marginLeft: `${folder.depth * 18}px` }}
+                  onBlur={(event) => commitRename(event.currentTarget.value)}
+                  onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { onEditFolder(null); } }}
                 /> : <>
                   <button className="folder-toggle-button" type="button" style={{ marginLeft: `${folder.depth * 18}px` }} onClick={() => toggleFolder(folder.id)} onContextMenu={openFolderMenu} title={isExpanded ? 'Replier le dossier' : 'Déplier le dossier'} aria-label={isExpanded ? 'Replier le dossier' : 'Déplier le dossier'}>{isExpanded ? '▾' : '▸'}</button>
                   <button className={isSelected ? 'folder-button selected' : 'folder-button'} type="button" onClick={() => onViewChange('folder', folder.id)} onDoubleClick={startRename}
                     aria-haspopup="menu" onContextMenu={openFolderMenu} title="Double-clic pour renommer">
                     <span className="folder-label"><span className="folder-icon" aria-hidden="true" />{folder.name}</span><strong>{folderDocumentCounts[folder.id] ?? 0}</strong>
                   </button>
-                  {folderMenu?.folderId === folder.id && <div className="folder-context-menu" role="menu" aria-label={folder.name}
-                    style={{
-                      left: folderMenu.x < window.innerWidth / 2 ? folderMenu.x : undefined,
-                      right: folderMenu.x >= window.innerWidth / 2 ? window.innerWidth - folderMenu.x : undefined,
-                      top: folderMenu.y < window.innerHeight / 2 ? folderMenu.y : undefined,
-                      bottom: folderMenu.y >= window.innerHeight / 2 ? window.innerHeight - folderMenu.y : undefined,
-                    }}
-                    onBlur={() => setFolderMenu(null)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Escape') {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        folderMenu.trigger.focus();
-                        setFolderMenu(null);
-                      }
-                    }}>
-                    <button type="button" role="menuitem" autoFocus onClick={startRename}>Renommer</button>
-                  </div>}
                 </>}
                 {folderDocuments.map((document) => <button
                   className={selectedDocumentId === document.id ? 'tree-document-button selected' : 'tree-document-button'} key={document.id} type="button"
+                  onContextMenu={event => openMenu(event, { doc: document, view: 'folder' })}
                   style={{ marginLeft: `${28 + folder.depth * 18}px` }} onClick={() => onSelectDocument(document.id, 'folder', folder.id)}
                 ><span className="document-icon" aria-hidden="true" />{markers(document)}<span className="tree-document-title">{displayTitle(document)}</span></button>)}
               </div>;
@@ -276,17 +284,46 @@ export default function NavigationPane(props: NavigationPaneProps) {
         <section className="unfiled-tree-section" aria-label="Documents non classés">
           <div className="pseudo-folder-row">
             <button className="folder-toggle-button" type="button" onClick={() => setIsUnfiledExpanded((value) => !value)} title={isUnfiledExpanded ? 'Replier Non classés' : 'Déplier Non classés'} aria-label={isUnfiledExpanded ? 'Replier Non classés' : 'Déplier Non classés'}>{isUnfiledExpanded ? '▾' : '▸'}</button>
-            <button className={currentView === 'unfiled' ? 'folder-button selected' : 'folder-button'} type="button" onClick={() => onViewChange('unfiled', null)}>
+            <button className={props.branchSelected && currentView === 'unfiled' ? 'folder-button selected' : 'folder-button'} type="button" onClick={() => onViewChange('unfiled', null)}>
               <span className="folder-label"><span className="folder-icon" aria-hidden="true" />Non classés</span><strong>{unfiledCount}</strong>
             </button>
           </div>
           {isUnfiledExpanded ? <div className="tree-document-list">
             {unfiledDocuments.length === 0 ? <p className="folder-empty">Aucun document non classé.</p> : unfiledDocuments.map((document) => <button
-              className={selectedDocumentId === document.id ? 'tree-document-button selected' : 'tree-document-button'} key={document.id} type="button" onClick={() => onSelectDocument(document.id, 'unfiled', null)}
+              className={selectedDocumentId === document.id ? 'tree-document-button selected' : 'tree-document-button'} key={document.id} type="button"
+              onContextMenu={event => openMenu(event, { doc: document, view: 'unfiled' })}
+              onClick={() => onSelectDocument(document.id, 'unfiled', null)}
             ><span className="document-icon" aria-hidden="true" />{markers(document)}<span className="tree-document-title">{displayTitle(document)}</span></button>)}
           </div> : null}
         </section>
       </> : null}
     </div>
+    {folderMenu && target && <div className="folder-context-menu" role="menu"
+      aria-label={'folder' in target ? target.folder.name : displayTitle(target.doc)}
+      style={{
+        left: folderMenu.x < window.innerWidth / 2 ? folderMenu.x : undefined,
+        right: folderMenu.x >= window.innerWidth / 2 ? window.innerWidth - folderMenu.x : undefined,
+        top: folderMenu.y < window.innerHeight / 2 ? folderMenu.y : undefined,
+        bottom: folderMenu.y >= window.innerHeight / 2 ? window.innerHeight - folderMenu.y : undefined,
+      }}
+      onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFolderMenu(null); }}
+      onKeyDown={event => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          folderMenu.trigger.focus();
+          setFolderMenu(null);
+        }
+      }}>
+      {'folder' in target ? <>
+        {menuButton('Renommer', () => onEditFolder(target.folder.id), true)}
+        {menuButton('Supprimer', () => props.onDeleteFolder(target.folder))}
+      </> : target.doc.deleted_at
+        ? menuButton('Restaurer', () => props.onDocumentAction(target.doc, target.view, 'restore'), true)
+        : <>
+          {menuButton('Renommer', () => props.onDocumentAction(target.doc, target.view, 'rename'), true)}
+          {target.doc.special_role !== 'todo' && menuButton('Mettre à la corbeille', () => props.onDocumentAction(target.doc, target.view, 'trash'))}
+        </>}
+    </div>}
   </aside>;
 }

@@ -474,6 +474,10 @@ h2 {
   font-size: 0.78rem;
 }
 
+.folder-context-menu {
+  display: grid;
+}
+
 :is(.folder-context-menu, .character-context-menu) {
   position: fixed;
   z-index: 10;

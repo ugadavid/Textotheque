@@ -1693,6 +1693,18 @@ export class TextothequeDatabase {
     return folder;
   }
 
+  deleteEmptyFolder(id: number): void {
+    const result = this.db.prepare(`
+      DELETE FROM folders WHERE id = @id
+      AND NOT EXISTS (SELECT 1 FROM folders WHERE parent_id = @id)
+      AND NOT EXISTS (SELECT 1 FROM documents WHERE folder_id = @id)
+    `).run({ id });
+    if (result.changes === 0) {
+      this.assertFolderExists(id, 'Suppression du dossier');
+      throw new Error('Le dossier doit être vide avant d’être supprimé.');
+    }
+  }
+
   renameFolder(id: number, name: string): Folder {
     const now = nowIso();
     const normalizedName = name.trim() || 'Nouveau dossier';

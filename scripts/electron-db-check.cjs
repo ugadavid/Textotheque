@@ -1,3 +1,4 @@
+const assert = require('node:assert/strict');
 const path = require('node:path');
 const Database = require('better-sqlite3');
 const { app } = require('electron');
@@ -314,6 +315,20 @@ app
         throw new Error(`Un document protege a ete nettoye a tort: ${protectedDocument.id}`);
       }
     }
+
+    const parent = db.createFolder(null);
+    const child = db.createFolder(parent.id);
+    const member = db.createDocument(child.id);
+    assert.throws(() => db.deleteEmptyFolder(parent.id), /doit être vide/);
+    assert.throws(() => db.deleteEmptyFolder(child.id), /doit être vide/);
+    db.trashDocument(member.id);
+    assert.throws(() => db.deleteEmptyFolder(child.id), /doit être vide/);
+    assert.equal(db.getDocument(member.id).folder_id, child.id);
+    db.emptyTrash();
+    db.deleteEmptyFolder(child.id);
+    assert.throws(() => db.deleteEmptyFolder(child.id), /introuvable/);
+    db.deleteEmptyFolder(parent.id);
+    assert.ok(db.listFolders().every(folder => folder.id !== parent.id && folder.id !== child.id));
 
     db.close();
     db = null;

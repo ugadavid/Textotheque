@@ -1,3 +1,4 @@
+import type { EditAction, EditTarget } from '../src/types/edit-menu.js';
 import {
   app,
   BrowserWindow,
@@ -63,6 +64,7 @@ let libraryHistory: LibraryHistoryRegistry | null = null;
 let closeApproved = false;
 let documentExportAvailable = false;
 let explorerOrder: 'manual' | 'alphabetical' = 'manual';
+let editTarget: EditTarget = 'none';
 let searchMenuState: SearchMenuState = { activeSavedSearchId: null, modified: false, canSave: true };
 
 function getDatabasePath(): string {
@@ -256,6 +258,18 @@ function registerIpcHandlers(): void {
   registerIpcHandler('documents:list-deleted', () => getDatabase().listDeletedDocuments());
   registerIpcHandler('folders:list', () => getDatabase().listFolders());
   registerIpcHandler('folders:create', (_event, parentId: number | null) => getDatabase().createFolder(parentId));
+  registerIpcHandler('edit:set-target', (_event, target: EditTarget) => {
+    editTarget = target;
+    for (const entry of editEntries) {
+      const item = Menu.getApplicationMenu()?.getMenuItemById('edit-' + entry.action);
+      if (item) item.enabled = entry.targets.includes(target);
+    }
+  });
+  registerIpcHandler('folders:delete-empty', (_event, id: number, expectedLibraryPath: string) => {
+    const database = getDatabase();
+    if (!database.isCurrentLibraryPath(expectedLibraryPath)) throw new Error('Le contexte de bibliothèque a changé.');
+    database.deleteEmptyFolder(id);
+  });
   registerIpcHandler('folders:rename', (_event, id: number, name: string) => getDatabase().renameFolder(id, name));
   registerIpcHandler('documents:create', (_event, folderId: number | null) => getDatabase().createDocument(folderId));
   registerIpcHandler('documents:get-or-create-special', (_event, role: SpecialDocumentRole) =>
@@ -305,6 +319,13 @@ function knownLibraryLabels(libraries: KnownLibrary[]): Map<string, string> {
   }));
 }
 
+const editEntries: { action: EditAction; label: string; targets: EditTarget[] }[] = [
+  { action: 'rename', label: 'Renommer', targets: ['folder', 'document', 'todo'] },
+  { action: 'trash', label: 'Mettre à la corbeille', targets: ['document'] },
+  { action: 'delete-folder', label: 'Supprimer le dossier', targets: ['folder'] },
+  { action: 'restore', label: 'Restaurer', targets: ['deleted'] },
+];
+
 function refreshApplicationMenu(): void {
   const manager = getLibraryManager();
   const knownLibraries = getLibraryHistory().getKnownLibraries();
@@ -335,6 +356,13 @@ function refreshApplicationMenu(): void {
           click: () => sendFileMenuAction({ action: 'export-text' }),
         },
       ],
+    },
+    {
+      label: 'Édition',
+      submenu: editEntries.map(({ action, label, targets }) => ({
+        id: 'edit-' + action, label, enabled: targets.includes(editTarget),
+        click: () => mainWindow?.webContents.send('edit:action', action),
+      })),
     },
     {
       label: 'Bibliothèque',

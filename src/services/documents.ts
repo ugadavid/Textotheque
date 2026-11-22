@@ -16,6 +16,10 @@ export async function createFolder(parentId: number | null = null): Promise<Fold
   return window.textotheque.createFolder(parentId);
 }
 
+export function deleteEmptyFolder(id: number, libraryPath: string): Promise<void> {
+  return window.textotheque.deleteEmptyFolder(id, libraryPath);
+}
+
 export async function renameFolder(id: number, name: string): Promise<Folder> {
   return window.textotheque.renameFolder(id, name);
 }
