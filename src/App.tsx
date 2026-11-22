@@ -949,8 +949,7 @@ export default function App() {
     const path = libraryInfo?.path;
     if (!path) return;
     if (folders.some(child => child.parent_id === folder.id) ||
-        documents.some(doc => doc.folder_id === folder.id) ||
-        deletedDocuments.some(doc => doc.folder_id === folder.id)) {
+        documents.some(doc => doc.folder_id === folder.id)) {
       setError('Le dossier doit être vide avant d’être supprimé.');
       return;
     }
@@ -962,6 +961,7 @@ export default function App() {
       await deleteEmptyFolder(folder.id, path);
       if (activeLibraryPathRef.current !== path) return;
       setFolders(current => current.filter(item => item.id !== folder.id));
+      setDeletedDocuments(current => current.map(doc => doc.folder_id === folder.id ? { ...doc, folder_id: null } : doc));
       if (selectedFolderId === folder.id) {
         setBranchSelected(false);
         setSelectedFolderId(null);

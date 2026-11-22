@@ -1694,15 +1694,18 @@ export class TextothequeDatabase {
   }
 
   deleteEmptyFolder(id: number): void {
-    const result = this.db.prepare(`
-      DELETE FROM folders WHERE id = @id
-      AND NOT EXISTS (SELECT 1 FROM folders WHERE parent_id = @id)
-      AND NOT EXISTS (SELECT 1 FROM documents WHERE folder_id = @id)
-    `).run({ id });
-    if (result.changes === 0) {
+    const remove = this.db.transaction(() => {
       this.assertFolderExists(id, 'Suppression du dossier');
-      throw new Error('Le dossier doit être vide avant d’être supprimé.');
-    }
+      const occupied = this.db.prepare(`
+        SELECT 1 WHERE EXISTS (SELECT 1 FROM folders WHERE parent_id = @id)
+                    OR EXISTS (SELECT 1 FROM documents WHERE folder_id = @id AND deleted_at IS NULL)
+      `).get({ id });
+      if (occupied) throw new Error('Le dossier doit être vide avant d’être supprimé.');
+
+      this.db.prepare('UPDATE documents SET folder_id = NULL WHERE folder_id = ? AND deleted_at IS NOT NULL').run(id);
+      this.db.prepare('DELETE FROM folders WHERE id = ?').run(id);
+    });
+    remove.immediate();
   }
 
   renameFolder(id: number, name: string): Folder {

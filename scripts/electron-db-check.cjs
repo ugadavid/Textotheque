@@ -321,13 +321,36 @@ app
     const member = db.createDocument(child.id);
     assert.throws(() => db.deleteEmptyFolder(parent.id), /doit être vide/);
     assert.throws(() => db.deleteEmptyFolder(child.id), /doit être vide/);
-    db.trashDocument(member.id);
+    const other = db.createDocument(child.id);
+    const elsewhere = db.trashDocument(db.createDocument(parent.id).id);
+    const firstTrashed = db.trashDocument(member.id);
     assert.throws(() => db.deleteEmptyFolder(child.id), /doit être vide/);
-    assert.equal(db.getDocument(member.id).folder_id, child.id);
-    db.emptyTrash();
+    assert.deepEqual(db.getDocument(member.id), firstTrashed);
+    assert.throws(() => db.deleteEmptyFolder(parent.id), /doit être vide/);
+    assert.deepEqual(db.getDocument(elsewhere.id), elsewhere);
+
+    const secondTrashed = db.trashDocument(other.id);
+    // Fail the final DELETE after the UPDATE to exercise SQLite rollback.
+    const fixture = new Database(dbPath);
+    try {
+      fixture.exec("CREATE TRIGGER fail_folder_delete BEFORE DELETE ON folders BEGIN SELECT RAISE(ABORT, 'test rollback'); END");
+      assert.throws(() => db.deleteEmptyFolder(child.id), /test rollback/);
+      for (const doc of [firstTrashed, secondTrashed]) assert.deepEqual(db.getDocument(doc.id), doc);
+      assert.ok(db.listFolders().some(f => f.id === child.id));
+      fixture.exec('DROP TRIGGER fail_folder_delete');
+    } finally {
+      fixture.close();
+    }
+
     db.deleteEmptyFolder(child.id);
+    for (const doc of [firstTrashed, secondTrashed]) assert.deepEqual(db.getDocument(doc.id), { ...doc, folder_id: null });
+    assert.deepEqual(db.getDocument(elsewhere.id), elsewhere);
+    assert.equal(db.restoreDocument(member.id).folder_id, null);
     assert.throws(() => db.deleteEmptyFolder(child.id), /introuvable/);
     db.deleteEmptyFolder(parent.id);
+    const empty = db.createFolder(null);
+    db.deleteEmptyFolder(empty.id);
+    assert.ok(!db.listFolders().some(f => f.id === empty.id));
     assert.ok(db.listFolders().every(folder => folder.id !== parent.id && folder.id !== child.id));
 
     db.close();
